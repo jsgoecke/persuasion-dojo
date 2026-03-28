@@ -43,3 +43,4 @@ swift/AudioCapture/DerivedData/
 *.tmp
 data/
 resources/google_client_secret*.json
+.coverage

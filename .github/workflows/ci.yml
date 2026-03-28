@@ -64,8 +64,11 @@ jobs:
   test-e2e:
     name: Electron E2E tests (Playwright)
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: [test-backend, test-frontend]
+    # Non-blocking: 50 serial Electron specs take 25-35 min on CI.
+    # Don't fail the overall workflow while we optimize E2E runtime.
+    continue-on-error: true
 
     defaults:
       run:

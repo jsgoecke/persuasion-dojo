@@ -9,7 +9,7 @@ on:
 jobs:
   test-backend:
     name: Python backend tests
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
@@ -25,15 +25,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run tests
+      - name: Run tests with coverage
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
-        run: pytest --timeout=30 -v
+          CI: "true"
+        run: >
+          pytest -m "not integration and not eval"
+          --timeout=30 -v
+          --cov=backend
+          --cov-report=term-missing
+          --cov-fail-under=75
 
   test-frontend:
     name: React component tests
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     timeout-minutes: 10
 
     defaults:
@@ -57,7 +61,43 @@ jobs:
       - name: Run Vitest component tests
         run: npx vitest run
 
-  # NOTE: Electron E2E tests (Playwright) are run locally only.
-  # CI requires the Electron app to be pre-built (npm run build) before
-  # Playwright can launch it — adding a full electron-builder step to CI
-  # is a separate task. Run locally with: npx playwright test
+  test-e2e:
+    name: Electron E2E tests (Playwright)
+    runs-on: macos-14
+    timeout-minutes: 20
+    needs: [test-backend, test-frontend]
+
+    defaults:
+      run:
+        working-directory: frontend/overlay
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/overlay/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron app (unpacked, no signing)
+        run: npm run build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright E2E tests
+        run: npx playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/overlay/playwright-report/
+          retention-days: 7

@@ -42,10 +42,13 @@ from backend.profiler import WindowClassification
 # Skip marker
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("ANTHROPIC_API_KEY"),
-    reason="requires ANTHROPIC_API_KEY — skipped in CI",
-)
+pytestmark = [
+    pytest.mark.eval,
+    pytest.mark.skipif(
+        not os.environ.get("ANTHROPIC_API_KEY"),
+        reason="requires ANTHROPIC_API_KEY — skipped in CI",
+    ),
+]
 
 # ---------------------------------------------------------------------------
 # Shared fixture builders

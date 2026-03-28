@@ -29,10 +29,13 @@ from backend.pre_seeding import classify, PreSeedResult
 # Skip all tests gracefully if no API key
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("ANTHROPIC_API_KEY"),
-    reason="ANTHROPIC_API_KEY not set — skipping LLM eval fixtures",
-)
+pytestmark = [
+    pytest.mark.eval,
+    pytest.mark.skipif(
+        not os.environ.get("ANTHROPIC_API_KEY"),
+        reason="ANTHROPIC_API_KEY not set — skipping LLM eval fixtures",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

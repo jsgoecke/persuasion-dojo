@@ -24,6 +24,9 @@ import wave
 
 import pytest
 
+# Mark the entire module as integration tests (skipped in CI by default)
+pytestmark = pytest.mark.integration
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv

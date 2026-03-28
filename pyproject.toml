@@ -1,0 +1,24 @@
+[project]
+name = "persuasion-dojo"
+version = "0.1.0"
+description = "Live conversation coaching — real-time persuasion prompts during meetings"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires live API keys (Deepgram, Anthropic)",
+    "slow: tests that take >5s",
+    "eval: LLM eval tests that cost money",
+]
+testpaths = ["tests"]
+timeout = 30
+
+[tool.coverage.run]
+source = ["backend"]
+omit = ["tests/*", "*/test_*"]
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = true
+skip_empty = true

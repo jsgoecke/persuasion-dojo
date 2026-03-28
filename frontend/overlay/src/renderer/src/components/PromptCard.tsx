@@ -29,7 +29,7 @@ export function PromptCard({
   onToggleHistory,
 }: PromptCardProps) {
   return (
-    <div role="article" aria-label="Coaching prompt">
+    <div role="region" aria-label="Coaching prompt">
       {/* Layer switcher */}
       <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 8 }}>
         {LAYERS.map((layer, i) => (

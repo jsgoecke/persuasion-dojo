@@ -308,22 +308,23 @@ describe("Overlay", () => {
     expect(screen.getByText("Go live")).toBeInTheDocument();
   });
 
-  it("shows 'Prepare' button on home screen", () => {
+  it("shows 'Enter the Dojo' button on home screen", () => {
     render(<Overlay />);
-    expect(screen.getByText("Prepare")).toBeInTheDocument();
+    expect(screen.getByText("Enter the Dojo")).toBeInTheDocument();
   });
 
-  it("shows 'Self assessment', 'Profiles', and 'Retro' ghost buttons", () => {
+  it("shows 'Self assessment', 'Profiles', and 'Upload & Analyze' nav items", () => {
     render(<Overlay />);
     expect(screen.getByText("Self assessment")).toBeInTheDocument();
     expect(screen.getByText("Profiles")).toBeInTheDocument();
-    expect(screen.getByText("Retro")).toBeInTheDocument();
+    expect(screen.getByText("Upload & Analyze")).toBeInTheDocument();
   });
 
   it("shows Persuasion Dojo title on home screen", () => {
     render(<Overlay />);
     expect(screen.getByText(/Persuasion/)).toBeInTheDocument();
-    expect(screen.getByText(/Dojo/)).toBeInTheDocument();
+    // Use getAllByText since "Dojo" appears in multiple elements (title + buttons)
+    expect(screen.getAllByText(/Dojo/).length).toBeGreaterThan(0);
   });
 
   it("shows Settings link on home screen", () => {
@@ -356,24 +357,24 @@ describe("Overlay", () => {
     expect(screen.getByText("Begin coaching")).toBeInTheDocument();
   });
 
-  it("navigates to preparation hub when 'Prepare' is clicked", () => {
+  it("navigates to preparation hub when 'Enter the Dojo' is clicked", () => {
     render(<Overlay />);
-    fireEvent.click(screen.getByText("Prepare"));
+    fireEvent.click(screen.getByText("Enter the Dojo"));
     expect(screen.getByText("Spar with an archetype")).toBeInTheDocument();
     expect(screen.getByText("Rehearse with a contact")).toBeInTheDocument();
   });
 
-  it("shows Post coach card in preparation hub", () => {
+  it("shows Text Coach card in preparation hub", () => {
     render(<Overlay />);
-    fireEvent.click(screen.getByText("Prepare"));
-    expect(screen.getByText("Post coach")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Enter the Dojo"));
+    expect(screen.getByText("Text Coach")).toBeInTheDocument();
     expect(screen.getByText(/Paste a draft LinkedIn post/)).toBeInTheDocument();
   });
 
   it("navigates to post coach screen from preparation hub", () => {
     render(<Overlay />);
-    fireEvent.click(screen.getByText("Prepare"));
-    fireEvent.click(screen.getByText("Post coach").closest("div[style]")!);
+    fireEvent.click(screen.getByText("Enter the Dojo"));
+    fireEvent.click(screen.getByText("Text Coach").closest("div[style]")!);
     expect(screen.getByText("Your draft")).toBeInTheDocument();
     expect(screen.getByText("Get coaching")).toBeInTheDocument();
   });

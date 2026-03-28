@@ -46,6 +46,7 @@ const mockResetSession = vi.fn();
 
 import { HistoryTray } from "../src/renderer/src/components/HistoryTray";
 import { ConnectionStatus } from "../src/renderer/src/components/ConnectionStatus";
+import { RetroImportPane } from "../src/renderer/src/components/RetroImportPane";
 import { Overlay } from "../src/renderer/src/Overlay";
 
 // ── Shared fixtures ────────────────────────────────────────────────────────
@@ -227,6 +228,7 @@ describe("Overlay", () => {
   });
 
   it("shows recent sessions from backend", async () => {
+    vi.useFakeTimers();
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve([
@@ -235,8 +237,14 @@ describe("Overlay", () => {
       ]),
     });
     render(<Overlay />);
-    // Fetch is wrapped in setTimeout(fn, 0) — allow up to 3s on slow CI runners
-    expect(await screen.findByText("Q3 Board prep", {}, { timeout: 3000 })).toBeInTheDocument();
+    // Fire the setTimeout(fn, 0) that wraps the fetch, then flush Promise microtasks
+    await act(async () => {
+      vi.runAllTimers();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
+    expect(screen.getByText("Q3 Board prep")).toBeInTheDocument();
     expect(screen.getByText("Spar vs Inquisitor")).toBeInTheDocument();
   });
 
@@ -280,5 +288,139 @@ describe("Overlay", () => {
     const { unmount } = render(<Overlay />);
     unmount();
     expect(cleanup).toHaveBeenCalledOnce();
+  });
+});
+
+// ── RetroImportPane ─────────────────────────────────────────────────────────
+
+describe("RetroImportPane", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("calls onJobIdChange when upload succeeds", async () => {
+    const onJobIdChange = vi.fn();
+    const onBack = vi.fn();
+
+    const fetchMock = vi.fn()
+      // First call: POST /retro/upload
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ job_id: "test-job-123" }),
+      })
+      // Subsequent calls: GET /retro/jobs/... (polling)
+      .mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ status: "processing", progress: 0, total: 0 }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container, unmount } = render(
+      <RetroImportPane onBack={onBack} onJobIdChange={onJobIdChange} />,
+    );
+
+    // Simulate file selection
+    const input = container.querySelector("input[type='file']") as HTMLInputElement;
+    const file = new File(["Alice: Hello.\nBob: Hi."], "test.txt", { type: "text/plain" });
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [file] } });
+    });
+
+    // Click Analyze
+    const analyzeBtn = screen.getByRole("button", { name: /analyze/i });
+    await act(async () => {
+      fireEvent.click(analyzeBtn);
+    });
+
+    // Wait for the upload promise to resolve
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onJobIdChange).toHaveBeenCalledWith("test-job-123");
+    unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it("reconnects to existing job on remount via activeJobId prop", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: "processing",
+        progress: 5,
+        total: 10,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Mount with an existing activeJobId — simulates navigating back
+    const { unmount } = render(
+      <RetroImportPane
+        onBack={vi.fn()}
+        activeJobId="existing-job-456"
+        onJobIdChange={vi.fn()}
+      />,
+    );
+
+    // The component should immediately fetch the job status
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/retro/jobs/existing-job-456"),
+    );
+
+    // Should show processing state
+    expect(screen.getByText(/Processing/)).toBeInTheDocument();
+
+    unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it("clears parent jobId on reset", async () => {
+    const onJobIdChange = vi.fn();
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: "done",
+        progress: 10,
+        total: 10,
+        utterances: [{ speaker_id: "Alice", text: "Hello", start: 0 }],
+        scores: { persuasion_score: 75, timing_score: 20, ego_safety_score: 22, convergence_score: 33 },
+        participants: [],
+        debrief: "Good session.",
+        session_id: "sess-1",
+      }),
+    }));
+
+    render(
+      <RetroImportPane
+        onBack={vi.fn()}
+        activeJobId="done-job-789"
+        onJobIdChange={onJobIdChange}
+      />,
+    );
+
+    // Wait for fetch to complete and render done state
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Click "Analyze another file" to reset
+    const resetBtn = screen.getByText("Analyze another file");
+    await act(async () => {
+      fireEvent.click(resetBtn);
+    });
+
+    expect(onJobIdChange).toHaveBeenCalledWith(null);
   });
 });

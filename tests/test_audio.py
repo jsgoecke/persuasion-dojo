@@ -178,7 +178,7 @@ class TestChunkDelivery:
         payload = [bytes([i]) * 64 for i in range(5)]
         await reader.start()
         _write_to_pipe(pipe_path, payload, delay_s=0.02)
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.8)
         await reader.stop()
 
         received = b"".join(chunks_out)

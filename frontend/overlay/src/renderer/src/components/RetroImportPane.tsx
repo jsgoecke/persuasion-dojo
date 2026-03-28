@@ -45,6 +45,9 @@ interface Job {
 interface RetroImportPaneProps {
   onBack: () => void;
   onViewSession?: (sessionId: string) => void;
+  /** Lifted job ID — survives unmount so back button doesn't kill the analysis. */
+  activeJobId?: string | null;
+  onJobIdChange?: (jobId: string | null) => void;
 }
 
 const ARCHETYPE_COLORS: Record<string, string> = {
@@ -52,11 +55,18 @@ const ARCHETYPE_COLORS: Record<string, string> = {
   Firestarter: "#F59E0B",
   Inquisitor: "#A855F7",
   "Bridge Builder": "#10B981",
+  Unknown: "#6B7280",
 };
 
-export function RetroImportPane({ onBack, onViewSession }: RetroImportPaneProps): React.ReactElement {
+export function RetroImportPane({ onBack, onViewSession, activeJobId, onJobIdChange }: RetroImportPaneProps): React.ReactElement {
   const [file, setFile] = useState<File | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
+  // Use lifted jobId from parent if provided, otherwise local state
+  const [localJobId, setLocalJobId] = useState<string | null>(null);
+  const jobId = activeJobId ?? localJobId;
+  const setJobId = (id: string | null) => {
+    setLocalJobId(id);
+    onJobIdChange?.(id);
+  };
   const [job, setJob] = useState<Job | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,15 +79,21 @@ export function RetroImportPane({ onBack, onViewSession }: RetroImportPaneProps)
     };
   }, []);
 
+  // On mount, if there's an active job from a previous visit, start polling it
   useEffect(() => {
     if (!jobId) return;
+    // Immediately fetch current state
+    fetch(`${API}/retro/jobs/${jobId}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => { if (data) setJob(data); })
+      .catch(() => {});
+
     pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`${API}/retro/jobs/${jobId}`);
         if (!res.ok) return;
         const data: Job = await res.json();
         setJob(data);
-        // Keep polling after "done" until debrief arrives (or 60s timeout handled by backend)
         if (data.status === "error") {
           if (pollRef.current) clearInterval(pollRef.current);
         }

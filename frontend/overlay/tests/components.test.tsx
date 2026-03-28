@@ -272,31 +272,23 @@ describe("Overlay", () => {
 });
 
 // ── RetroImportPane ─────────────────────────────────────────────────────────
-// NOTE: RetroImportPane integration tests removed — the component uses
-// internal polling intervals that require vi.runAllTimers() coordination
-// which is brittle in jsdom. Covered by Playwright E2E tests instead.
+// ── RetroImportPane ─────────────────────────────────────────────────────────
+// Uses real timers — tests flush promises and unmount before polling fires.
 
-describe.skip("RetroImportPane", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
+describe("RetroImportPane", () => {
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("calls onJobIdChange when upload succeeds", async () => {
     const onJobIdChange = vi.fn();
-    const onBack = vi.fn();
 
     const fetchMock = vi.fn()
-      // First call: POST /retro/upload
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ job_id: "test-job-123" }),
       })
-      // Subsequent calls: GET /retro/jobs/... (polling)
       .mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ status: "processing", progress: 0, total: 0 }),
@@ -304,31 +296,26 @@ describe.skip("RetroImportPane", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { container, unmount } = render(
-      <RetroImportPane onBack={onBack} onJobIdChange={onJobIdChange} />,
+      <RetroImportPane onBack={vi.fn()} onJobIdChange={onJobIdChange} />,
     );
 
-    // Simulate file selection
     const input = container.querySelector("input[type='file']") as HTMLInputElement;
     const file = new File(["Alice: Hello.\nBob: Hi."], "test.txt", { type: "text/plain" });
     await act(async () => {
       fireEvent.change(input, { target: { files: [file] } });
     });
 
-    // Click Analyze
     const analyzeBtn = screen.getByRole("button", { name: /analyze/i });
     await act(async () => {
       fireEvent.click(analyzeBtn);
     });
 
-    // Wait for the upload promise to resolve
     await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 50));
     });
 
     expect(onJobIdChange).toHaveBeenCalledWith("test-job-123");
     unmount();
-    vi.unstubAllGlobals();
   });
 
   it("reconnects to existing job on remount via activeJobId prop", async () => {
@@ -342,7 +329,6 @@ describe.skip("RetroImportPane", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    // Mount with an existing activeJobId — simulates navigating back
     const { unmount } = render(
       <RetroImportPane
         onBack={vi.fn()}
@@ -351,20 +337,16 @@ describe.skip("RetroImportPane", () => {
       />,
     );
 
-    // The component should immediately fetch the job status
     await act(async () => {
-      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 50));
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/retro/jobs/existing-job-456"),
     );
 
-    // Should show processing state
     expect(screen.getByText(/Processing/)).toBeInTheDocument();
-
     unmount();
-    vi.unstubAllGlobals();
   });
 
   it("clears parent jobId on reset", async () => {
@@ -384,7 +366,7 @@ describe.skip("RetroImportPane", () => {
       }),
     }));
 
-    render(
+    const { unmount } = render(
       <RetroImportPane
         onBack={vi.fn()}
         activeJobId="done-job-789"
@@ -392,18 +374,16 @@ describe.skip("RetroImportPane", () => {
       />,
     );
 
-    // Wait for fetch to complete and render done state
     await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 50));
     });
 
-    // Click "Analyze another file" to reset
     const resetBtn = screen.getByText("Analyze another file");
     await act(async () => {
       fireEvent.click(resetBtn);
     });
 
     expect(onJobIdChange).toHaveBeenCalledWith(null);
+    unmount();
   });
 });

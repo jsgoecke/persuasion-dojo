@@ -2366,19 +2366,25 @@ async def retro_upload(
                     except Exception:
                         pass
 
-            # Run profiler on non-user utterances to classify participants
+            # Run profiler on ALL speakers to classify participants.
+            # In retro analysis we don't reliably know which speaker is the
+            # user, so profile everyone and let the user curate later.
             profiler = ParticipantProfiler()
+            speakers_seen: set[str] = set()
             for utt in utterances:
-                if utt["speaker_id"] != _DEFAULT_USER_SPEAKER:
-                    profiler.add_utterance(utt["speaker_id"], utt["text"])
+                speakers_seen.add(utt["speaker_id"])
+                profiler.add_utterance(utt["speaker_id"], utt["text"])
+            logger.info("[retro] speakers seen: %s (%d utterances)", speakers_seen, len(utterances))
+
             participant_profiles: dict[str, dict] = {}
             for sid, cls in profiler.all_classifications().items():
-                if cls.superpower != "Undetermined":
-                    participant_profiles[sid] = {
-                        "speaker_id": sid,
-                        "archetype": cls.superpower,
-                        "confidence": round(cls.confidence, 2),
-                    }
+                logger.info("[retro] profiler: %s → %s (conf=%.2f)", sid, cls.superpower, cls.confidence)
+                # Include all speakers — even "Undetermined" — so profiles are created
+                participant_profiles[sid] = {
+                    "speaker_id": sid,
+                    "archetype": cls.superpower if cls.superpower != "Undetermined" else "Unknown",
+                    "confidence": round(cls.confidence, 2),
+                }
 
             # Persist utterances, profiles, and compute score
             scores: dict[str, Any] = {}
@@ -2430,6 +2436,7 @@ async def retro_upload(
                     for _u in utterances:
                         _utts_by_spk.setdefault(_u["speaker_id"], []).append(_u)
 
+                    logger.info("[retro] persisting %d participant profiles", len(participant_profiles))
                     for sid, profile in participant_profiles.items():
                         display_name = sid
                         if _re.match(r"^speaker_\d+$", sid):
@@ -2447,6 +2454,13 @@ async def retro_upload(
                             )
                             db.add(p)
                             await db.flush()
+                            logger.info("[retro] created participant: %s → %s (id=%s)", display_name, profile["archetype"], p.id)
+                        else:
+                            # Update top-level profile if retro analysis has higher confidence
+                            if profile["confidence"] > (p.ps_confidence or 0):
+                                p.ps_type = profile["archetype"]
+                                p.ps_confidence = profile["confidence"]
+                            logger.info("[retro] resolved existing participant: %s (id=%s)", display_name, p.id)
 
                         cls = profiler.all_classifications().get(sid)
                         if cls:
@@ -2533,10 +2547,17 @@ async def retro_upload(
                                 context="retro",
                             ))
 
-                        # Link participant to session
-                        await db.execute(
-                            _sp.insert().values(session_id=session_id, participant_id=p.id)
+                        # Link participant to session (skip if already linked)
+                        _existing = await db.execute(
+                            select(_sp).where(
+                                _sp.c.session_id == session_id,
+                                _sp.c.participant_id == p.id,
+                            )
                         )
+                        if _existing.first() is None:
+                            await db.execute(
+                                _sp.insert().values(session_id=session_id, participant_id=p.id)
+                            )
                         profile["name"] = p.name or display_name
                         profile["participant_id"] = p.id
 
@@ -2552,6 +2573,7 @@ async def retro_upload(
                     _generate_retro_debrief(job, session_id, utterances, scores)
                 )
         except Exception as exc:
+            logger.exception("[retro] job %s failed: %s", job_id, exc)
             job["status"] = "error"
             job["error"] = str(exc)
 

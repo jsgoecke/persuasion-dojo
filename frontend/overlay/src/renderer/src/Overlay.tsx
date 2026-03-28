@@ -206,6 +206,9 @@ export function Overlay(): React.ReactElement {
   // Session debrief (polled after session ends)
   const [reviewDebrief, setReviewDebrief] = useState<string | null>(null);
 
+  // Retro import — lift jobId so it survives navigation away and back
+  const [activeRetroJobId, setActiveRetroJobId] = useState<string | null>(null);
+
   // Audio status (from Electron main process via Swift binary OR backend no_audio)
   const [audioStatus, setAudioStatus] = useState<{ type: string; message: string } | null>(null);
   const [audioToastDismissed, setAudioToastDismissed] = useState(false);
@@ -1500,6 +1503,8 @@ export function Overlay(): React.ReactElement {
         <RetroImportPane
           onBack={() => setScreen("home")}
           onViewSession={(sid) => { setSelectedSessionId(sid); setScreen("transcript"); }}
+          activeJobId={activeRetroJobId}
+          onJobIdChange={setActiveRetroJobId}
         />
       </div>,
     );

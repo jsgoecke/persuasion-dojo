@@ -272,6 +272,102 @@ CoachingPrompt
 
 ---
 
+## How the system learns profiles over time
+
+### User profile learning
+
+Every user has a profile on two axes: **focus** (Logic ↔ Narrative) and **stance** (Advocate ↔ Analyze). These are continuous scores from −100 to +100. The system starts with a prior from the onboarding quiz and refines it through observed behavior across every session.
+
+**The learning pipeline runs end-to-end like this:**
+
+```
+During the session
+──────────────────
+UserBehaviorObserver (profiler.py)
+  accumulates every user utterance
+  scores each on logic / narrative / advocacy / analysis signals
+  → produces SessionObservation(focus_score, stance_score, obs_confidence)
+
+obs_confidence = f(utterance_count)   ← exponential saturation
+  Few utterances (< 5)  → obs_confidence ≈ 0.2  (low weight)
+  Many utterances (≥ 30) → obs_confidence ≈ 0.95 (near full weight)
+
+At session end
+──────────────
+apply_session_observation(user, context_profiles, obs)
+  Layer 1 update (core axes — all sessions aggregated):
+    new_focus = (old_sessions × old_focus + obs_confidence × obs_focus)
+                ────────────────────────────────────────────────────────
+                            old_sessions + obs_confidence
+
+  Layer 2 update (context-specific — board / team / 1:1 / client):
+    same EWMA formula, applied only to the matching ContextProfile row
+
+  Confidence update:
+    confidence = 1.0 − 0.65 × e^(−sessions / 7.0)  clamped to [0.35, 0.95]
+```
+
+**Key property:** a session with few utterances (obs_confidence ≈ 0.2) contributes only 20% of a full session's weight to the aggregate. A 30-minute board meeting with 40 utterances contributes nearly a full session. This prevents sparse sessions from corrupting the profile.
+
+**Confidence schedule — how long until behavioral evidence dominates:**
+
+| Sessions | Confidence | What it means |
+|----------|-----------|---------------|
+| 0 | 0.35 | Self-assessment prior only |
+| 3 | ≈0.58 | Behavioral evidence beginning to take hold |
+| 7 | ≈0.76 | Roughly 50/50 prior vs. observed |
+| 15 | ≈0.91 | Behavioral evidence dominant |
+| 25+ | ≈0.95 | Maximum (prior contributes < 5%) |
+
+### The three-layer profile architecture
+
+The system doesn't just have one profile per user — it has three layers:
+
+```
+Layer 1 — Core (User.core_focus / User.core_stance)
+  Aggregate across ALL sessions and ALL contexts.
+  The baseline: "who you are across all your meetings."
+
+Layer 2 — Context-stratified (ContextProfile)
+  One profile per meeting type: board / team / 1:1 / client / all-hands.
+  Unlocks after 3 sessions in that context (MIN_CONTEXT_SESSIONS).
+  Detects situational style shifts: "you're more Logic-dominant in board meetings."
+
+Layer 3 — Session observation (MeetingSession.obs_focus / obs_stance)
+  Raw behavioral read for a single session.
+  Feeds the EWMA update to Layers 1 and 2.
+  Not used directly for coaching — it's the input, not the output.
+```
+
+**How the coaching engine selects which layer to use:**
+
+```python
+if context_sessions >= MIN_CONTEXT_SESSIONS (3):
+    use Layer 2 (context-specific profile)
+    if Layer 2 archetype ≠ Layer 1 archetype:
+        context_shifts = True
+        # coaching hint: "In board meetings you shift toward Firestarter —
+        #  lead with the vision before the data today"
+else:
+    use Layer 1 (core profile)
+```
+
+### Participant profile learning
+
+Counterpart profiles work identically — same EWMA formula, same confidence schedule, same context stratification. The difference is the signal source: participant utterances are classified by `ParticipantProfiler`, not `UserBehaviorObserver`.
+
+**Carry-forward rule:** once a participant has been observed in at least one utterance, they always have a classification. As the sliding window (default: 5 utterances) rotates, the classification updates in place rather than reverting to "Undetermined." This prevents the overlay from going blank mid-conversation when a counterpart goes quiet for a moment.
+
+**Persistence across meetings:** participant profiles are stored in SQLite keyed by name + org. When the same person appears in a future meeting, their profile picks up where it left off. By session 3, the system has enough signal to predict their preferred persuasion mode before they've said a word.
+
+### Pre-seeding as a cold-start bypass
+
+For a first meeting with someone the system has never seen, the user can paste a bio, email thread, or LinkedIn blurb before the meeting. `pre_seeding.py` classifies the text using the same signal patterns as the live profiler — giving the coaching engine a prior with which to start the audience layer immediately, rather than waiting for 5 live utterances.
+
+Pre-seed accuracy gate: ≥70% correct classification on 5 known profiles before the feature is trusted in production.
+
+---
+
 ## ACE Loop — Agentic Context Engineering
 
 The coaching engine gets smarter over time through a closed adaptive loop built on three roles: **Reflector → Curator → Selector**. This is the ACE (Agentic Context Engineering) pipeline.

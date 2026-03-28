@@ -65,6 +65,8 @@ class TestDeepgramKey:
         import urllib.request
         import urllib.error
 
+        if os.environ.get("CI"):
+            pytest.skip("Live API test — skipped in CI")
         key = _get_deepgram_key()
         if not key:
             pytest.skip("No Deepgram key")
@@ -329,6 +331,8 @@ class TestDeepgramStreaming:
     @pytest.mark.asyncio
     async def test_streaming_returns_transcript(self):
         """Send a WAV of silence+speech via streaming WebSocket and verify transcript arrives."""
+        if os.environ.get("CI"):
+            pytest.skip("Live API test — skipped in CI")
         key = _get_deepgram_key()
         if not key:
             pytest.skip("No Deepgram key")
@@ -383,6 +387,8 @@ class TestDeepgramStreaming:
     @pytest.mark.asyncio
     async def test_keepalive_prevents_timeout(self):
         """Verify the connection stays alive during 8s of silence (KeepAlive fires at 5s)."""
+        if os.environ.get("CI"):
+            pytest.skip("Live API test — skipped in CI")
         key = _get_deepgram_key()
         if not key:
             pytest.skip("No Deepgram key")
@@ -408,6 +414,8 @@ class TestDeepgramStreaming:
     @pytest.mark.asyncio
     async def test_rate_limiting_prevents_overload(self):
         """Send audio at 10x realtime and verify the transcriber throttles it."""
+        if os.environ.get("CI"):
+            pytest.skip("Live API test — skipped in CI")
         key = _get_deepgram_key()
         if not key:
             pytest.skip("No Deepgram key")

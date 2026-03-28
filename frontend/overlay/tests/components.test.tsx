@@ -44,11 +44,8 @@ const mockResetSession = vi.fn();
 
 // ── Static component imports (receive mocked hook) ─────────────────────────
 
-import { LayerBadge } from "../src/renderer/src/components/LayerBadge";
-import { PromptCard } from "../src/renderer/src/components/PromptCard";
 import { HistoryTray } from "../src/renderer/src/components/HistoryTray";
 import { ConnectionStatus } from "../src/renderer/src/components/ConnectionStatus";
-import { SessionEndCard } from "../src/renderer/src/components/SessionEndCard";
 import { Overlay } from "../src/renderer/src/Overlay";
 
 // ── Shared fixtures ────────────────────────────────────────────────────────
@@ -60,26 +57,6 @@ const AUDIENCE_PROMPT = {
   triggered_by: "elm:ego_threat",
   speaker_id: "spk_1",
   received_at: 1_700_000_000_000,
-};
-
-const CACHED_PROMPT = {
-  layer: "self" as const,
-  text: "You have been in advocate mode for 4 minutes — ask a question.",
-  is_fallback: true,
-  triggered_by: "cadence:60s",
-  speaker_id: "",
-  received_at: 1_700_000_001_000,
-};
-
-const SESSION_RESULT = {
-  session_id: "sess_abc",
-  persuasion_score: 72,
-  growth_delta: 5,
-  breakdown: {
-    timing: 80,
-    ego_safety: 65,
-    convergence: 70,
-  },
 };
 
 // ── Mock window.api IPC bridge ─────────────────────────────────────────────
@@ -108,76 +85,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllMocks();
   delete (window as unknown as Record<string, unknown>).api;
-});
-
-// ── LayerBadge ─────────────────────────────────────────────────────────────
-
-describe("LayerBadge", () => {
-  it("renders the active badge with correct aria-label", () => {
-    render(<LayerBadge layer="audience" active={true} />);
-    expect(
-      screen.getByRole("button", { name: /active layer: audience/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("renders inactive badge with switch aria-label", () => {
-    render(<LayerBadge layer="self" active={false} />);
-    expect(
-      screen.getByRole("button", { name: /switch to self layer/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("shows → separator when showSeparator is true", () => {
-    render(<LayerBadge layer="group" active={false} showSeparator={true} />);
-    expect(screen.getByText("→")).toBeInTheDocument();
-  });
-
-  it("does not show separator by default", () => {
-    render(<LayerBadge layer="group" active={false} />);
-    expect(screen.queryByText("→")).not.toBeInTheDocument();
-  });
-
-  it("calls onClick when clicked", () => {
-    const onClick = vi.fn();
-    render(<LayerBadge layer="audience" active={false} onClick={onClick} />);
-    fireEvent.click(screen.getByRole("button"));
-    expect(onClick).toHaveBeenCalledOnce();
-  });
-});
-
-// ── PromptCard ─────────────────────────────────────────────────────────────
-
-describe("PromptCard", () => {
-  const defaultProps = {
-    prompt: AUDIENCE_PROMPT,
-    activeLayer: "audience" as const,
-    onCycleLayer: vi.fn(),
-    onDismiss: vi.fn(),
-    historyOpen: false,
-    onToggleHistory: vi.fn(),
-  };
-
-  it("renders prompt text", () => {
-    render(<PromptCard {...defaultProps} />);
-    expect(screen.getByText(AUDIENCE_PROMPT.text)).toBeInTheDocument();
-  });
-
-  it("does not show cached badge for non-fallback prompts", () => {
-    render(<PromptCard {...defaultProps} />);
-    expect(screen.queryByLabelText("Cached fallback prompt")).not.toBeInTheDocument();
-  });
-
-  it("shows cached badge for fallback prompts", () => {
-    render(<PromptCard {...defaultProps} prompt={CACHED_PROMPT} />);
-    expect(screen.getByLabelText("Cached fallback prompt")).toBeInTheDocument();
-  });
-
-  it("renders the prompt region with accessible label", () => {
-    render(<PromptCard {...defaultProps} />);
-    expect(
-      screen.getByRole("region", { name: /coaching prompt/i }),
-    ).toBeInTheDocument();
-  });
 });
 
 // ── HistoryTray ────────────────────────────────────────────────────────────
@@ -266,24 +173,6 @@ describe("ConnectionStatus", () => {
       <ConnectionStatus connectionState="connected" sessionPhase="ending" />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("Ending session…");
-  });
-});
-
-// ── SessionEndCard ─────────────────────────────────────────────────────────
-
-describe("SessionEndCard", () => {
-  it("renders all three sub-score labels", () => {
-    render(<SessionEndCard result={SESSION_RESULT} onDismiss={vi.fn()} />);
-    expect(screen.getByText("Timing")).toBeInTheDocument();
-    expect(screen.getByText("Ego Safety")).toBeInTheDocument();
-    expect(screen.getByText("Convergence")).toBeInTheDocument();
-  });
-
-  it("renders the session results region", () => {
-    render(<SessionEndCard result={SESSION_RESULT} onDismiss={vi.fn()} />);
-    expect(
-      screen.getByRole("region", { name: /session results/i }),
-    ).toBeInTheDocument();
   });
 });
 

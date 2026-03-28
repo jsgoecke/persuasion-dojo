@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Persuasion Dojo — Apple MDM Configuration Profile
+  ===================================================
+  Grants Screen Recording and Microphone permissions for Persuasion Dojo on
+  managed MacBooks without requiring manual user approval.
+
+  Deployment
+  ----------
+  1. Sign the profile with your Apple Developer certificate before distribution:
+       scripts/build-mdm-profile.sh
+  2. Upload the signed .mobileconfig to your MDM (Jamf, Mosyle, Kandji, etc.).
+  3. Deploy to the target smart group (e.g. "Sales Team", "Executives").
+
+  Permissions granted
+  -------------------
+  • ScreenCapture (kTCCServiceScreenCapture)
+    Required by the Swift ScreenCaptureKit binary to capture system audio
+    from Zoom / Teams / Meet / Webex without a user-visible permission dialog.
+
+  • Microphone (kTCCServiceMicrophone)
+    Required for Deepgram to transcribe the user's own microphone input.
+
+  References
+  ----------
+  • Apple Developer docs: Privacy Preferences Policy Control payload
+    https://developer.apple.com/documentation/devicemanagement/privacypreferencespolicycontrol
+  • com.apple.TCC.configuration-profile-policy payload key
+    https://support.apple.com/guide/mdm/privacy-preferences-policy-control-payload-mdm38df53c2a/web
+-->
+<plist version="1.0">
+<dict>
+
+  <!-- ── Profile metadata ─────────────────────────────────────────────── -->
+
+  <key>PayloadDisplayName</key>
+  <string>Persuasion Dojo — Permission Grant</string>
+
+  <key>PayloadDescription</key>
+  <string>Grants Screen Recording and Microphone access to Persuasion Dojo so the app can transcribe meeting audio without prompting the user each session.</string>
+
+  <key>PayloadIdentifier</key>
+  <string>com.persuasiondojo.mdm.permissions</string>
+
+  <key>PayloadOrganization</key>
+  <string>Persuasion Dojo</string>
+
+  <key>PayloadType</key>
+  <string>Configuration</string>
+
+  <!-- Increment PayloadVersion each time you update this profile -->
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+
+  <!-- PayloadUUID must be unique per profile.
+       Generate a new one with: uuidgen
+       This UUID identifies the top-level profile envelope. -->
+  <key>PayloadUUID</key>
+  <string>4A7E2C1B-8F3D-4E9A-B5C6-D0123456789A</string>
+
+  <!-- Scope: user (not system) so no FileVault or MDM enrollment required -->
+  <key>PayloadScope</key>
+  <string>User</string>
+
+  <!-- ── Payloads ─────────────────────────────────────────────────────── -->
+
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+
+      <!-- Privacy Preferences Policy Control payload.
+           This is the only payload type that can pre-grant TCC permissions
+           on managed devices without requiring user interaction.            -->
+
+      <key>PayloadType</key>
+      <string>com.apple.TCC.configuration-profile-policy</string>
+
+      <key>PayloadIdentifier</key>
+      <string>com.persuasiondojo.mdm.permissions.tcc</string>
+
+      <!-- UUID for this inner payload — must differ from the outer UUID -->
+      <key>PayloadUUID</key>
+      <string>9B3F5A2D-1C7E-4D8B-A6E0-F9876543210B</string>
+
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+
+      <key>PayloadDisplayName</key>
+      <string>Persuasion Dojo Privacy Permissions</string>
+
+      <!-- ── Services ───────────────────────────────────────────────── -->
+
+      <key>Services</key>
+      <dict>
+
+        <!-- Screen Recording -->
+        <key>ScreenCapture</key>
+        <array>
+          <dict>
+            <!-- Bundle ID of the Electron app wrapper -->
+            <key>Identifier</key>
+            <string>com.persuasiondojo.overlay</string>
+
+            <key>IdentifierType</key>
+            <string>bundleID</string>
+
+            <!-- Allow + prevent the user from changing it via System Settings -->
+            <key>Authorization</key>
+            <string>Allow</string>
+
+            <key>StaticCode</key>
+            <false/>
+          </dict>
+
+          <dict>
+            <!-- The Swift ScreenCaptureKit helper binary is a separate process.
+                 Its bundle ID matches the main app but Apple checks both.     -->
+            <key>Identifier</key>
+            <string>com.persuasiondojo.overlay.helper</string>
+
+            <key>IdentifierType</key>
+            <string>bundleID</string>
+
+            <key>Authorization</key>
+            <string>Allow</string>
+
+            <key>StaticCode</key>
+            <false/>
+          </dict>
+        </array>
+
+        <!-- Microphone -->
+        <key>Microphone</key>
+        <array>
+          <dict>
+            <key>Identifier</key>
+            <string>com.persuasiondojo.overlay</string>
+
+            <key>IdentifierType</key>
+            <string>bundleID</string>
+
+            <key>Authorization</key>
+            <string>Allow</string>
+
+            <key>StaticCode</key>
+            <false/>
+          </dict>
+        </array>
+
+      </dict>
+      <!-- /Services -->
+
+    </dict>
+  </array>
+  <!-- /PayloadContent -->
+
+</dict>
+</plist>

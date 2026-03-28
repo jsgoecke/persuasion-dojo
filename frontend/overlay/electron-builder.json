@@ -1,0 +1,43 @@
+{
+  "appId": "com.persuasiondojo.overlay",
+  "productName": "Persuasion Dojo",
+  "directories": {
+    "buildResources": "build",
+    "output": "dist"
+  },
+  "files": [
+    "out/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "../../swift/AudioCapture/.build/release/AudioCapture",
+      "to": "bin/AudioCapture"
+    }
+  ],
+  "afterSign": "./notarize.cjs",
+  "mac": {
+    "entitlementsInherit": "build/entitlements.mac.plist",
+    "extendInfo": {
+      "NSMicrophoneUsageDescription": "Persuasion Dojo needs microphone access to transcribe meeting audio.",
+      "NSScreenCaptureDescription": "Persuasion Dojo needs screen recording access to capture meeting audio."
+    },
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["arm64", "x64"]
+      }
+    ]
+  },
+  "dmg": {
+    "contents": [
+      { "x": 130, "y": 220 },
+      { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+    ]
+  },
+  "publish": {
+    "provider": "github",
+    "releaseType": "release"
+  }
+}

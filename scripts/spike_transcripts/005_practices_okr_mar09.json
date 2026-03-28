@@ -1,0 +1,203 @@
+{
+  "session_id": "005_practices_okr_mar09",
+  "utterances": [
+    {
+      "speaker": "Sam",
+      "text": "We're going to have a bit of a non-traditional Monday planning meeting. We have a hybrid week. Tuesday, Wednesday, Thursday, Francisco, Michael, Yumi, Yongmin and Paul and I will be on site in San Francisco. Vish, Vladi and TJ will not. So we got some coordination things to work through.",
+      "start": 0.0,
+      "end": 25.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "One of the things that we can do in person much faster than we can do remotely is to adapt our practices. I think what we came out of last week's retro with, normally the retros are pretty tight because we've actually been pretty high velocity as a team. But instead we were trying to do some more complicated work. We failed to deliver. We had a very productive retro. The good things about systems that go wrong is that you learn a lot.",
+      "start": 25.0,
+      "end": 67.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Vish put together some thoughts on our dev practices. We only have so many heartbeats, and we want to spend them really well. So what I'd like to invite today is for the next 20, 25 minutes, just declarations of what practices we are actively shifting.",
+      "start": 67.0,
+      "end": 90.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I'd like to create a quick practice improvement catalog, and then we can sweep back through and figure out how to discuss them or how to get them in our heads. Francisco, you've posted a few different docs, and I want to make sure that the most important ones are listed here.",
+      "start": 90.0,
+      "end": 116.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "I can give you one. I think it summarizes a lot of what I'm thinking, which is end to end ownership.",
+      "start": 116.0,
+      "end": 126.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "And do you have anything specific on the dev velocity work?",
+      "start": 126.5,
+      "end": 136.5
+    },
+    {
+      "speaker": "Francisco",
+      "text": "I'd say more of an implementation detail about how do we hill climb our harness engineering. So maybe you can call it hill climbing coding agents harness engineering.",
+      "start": 136.5,
+      "end": 150.5
+    },
+    {
+      "speaker": "Will",
+      "text": "After listening to and reading through the notes and recordings from last week, how do we rethink our product development? And in line with Vish's last point in that chart. How do we make it agent friendly? So we have ownership end to end, and then at the end, an agent can pick up the designed work and execute on it. And developing a process for that.",
+      "start": 150.5,
+      "end": 184.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I've come to believe that in the next six months or sooner, we will say that the specification is actually the thing that we all care about and the specifications where we iterate. When we go and use a harness to implement it, we may learn things along the way. We'll reflect that back to the specification. We will embrace the idea that we can simply regenerate the code from the specification.",
+      "start": 184.0,
+      "end": 220.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "Over the weekend, I put together a production license deal review document. Essentially taking in all the parameters of the Dell deal that we're working on. And then coming up with a report. Creating a deal intelligence capture platform. Because if we can do all of this in an automated fashion, we'll be able to understand our sales cycle, the challenges, the opportunities, next steps instantly.",
+      "start": 220.0,
+      "end": 253.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I've added Sailplane Engineering Manifesto. I've shared this with a few of you. It's heavily thematically aligned to end to end ownership. I think it's an inspiring piece of writing.",
+      "start": 253.0,
+      "end": 268.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "One of the things I did also over the weekend was moved some of my personal projects off of my Sailplane Anthropic keys onto my own keys. I think at some point soon we're going to want to be able to say this feature took this many tokens. Are we thinking about features in the right way? Are they the right size? Did they deliver the value that we expected?",
+      "start": 268.0,
+      "end": 303.0
+    },
+    {
+      "speaker": "Michael",
+      "text": "I want to open the discussion to us moving off of Team Pulse for everything. I noticed out of the retro was TJ pointing out a desire to not pollute Team Pulse with product related conversations. So in the spirit of keeping things transparent but still respecting social boundaries, I think we might want to open the conversation for us using other Slack channels.",
+      "start": 303.0,
+      "end": 335.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Are you going to come to that with some pre-work as a bid? How do you want to engage?",
+      "start": 335.0,
+      "end": 345.0
+    },
+    {
+      "speaker": "Michael",
+      "text": "A little bit of pre-work and I'm hoping to time box it to maybe 20 minutes because it'll either be consensus or not and then we keep things as is.",
+      "start": 345.0,
+      "end": 360.0
+    },
+    {
+      "speaker": "Yongmin",
+      "text": "I also want to learn or think about how to organize the Notion pages and Kanban system because sometimes I'm really confused. Where should I put this note? In the weekly or in a personal? Sometimes it's hard to find it later.",
+      "start": 360.0,
+      "end": 381.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "There's also the question of what goes in Notion versus what goes in GitHub. Notion is not necessarily agent friendly. GitHub is not necessarily human friendly. We're raising a critical scaling question, which is the system we have is kind of breaking. Where does knowledge belong, in what format and how do we share it?",
+      "start": 381.0,
+      "end": 408.5
+    },
+    {
+      "speaker": "Will",
+      "text": "I did a little pre-work on the flight, trying making a little Obsidian demo that I can show off. Because that's more agent friendly.",
+      "start": 408.5,
+      "end": 420.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I'm going to say from myself, I'm in a process of personal practice shifting, and I'm going to be allocating more of my time to reading because I realized that we're doing a lot of really thoughtful work. I need to set aside at least two hours a day for thoughtful reading. Thank you for being writers. I appreciate being part of a writing culture.",
+      "start": 420.5,
+      "end": 453.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "What are we a team for? We've got four objectives. We want to secure the Dell production deal. We've got the second customer evaluation deal. 25% better cycle time in staging at TSS. And secure foundation for scalable engineering velocity.",
+      "start": 453.0,
+      "end": 473.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "What I'm hearing is a specific key result for an objective that doesn't yet have one tracked, which maybe should be. About getting a Series A funding.",
+      "start": 473.0,
+      "end": 486.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I don't think we need to track Series A as an objective just yet. Four or five objectives is not better than four and four are not better than three. Smaller numbers is just much more easily navigable. The single most important driver of the Series A is securing the Dell production deal. So we don't want to look past the goal.",
+      "start": 486.5,
+      "end": 517.5
+    },
+    {
+      "speaker": "Francisco",
+      "text": "I like KRs that are a bit falsifiable, where just by looking at it, you can know whether that KR is attained or not. In this particular one, on-prem deployment is not enough. We're not going to succeed just having anything deployed. So I would bid to actually characterize that a little bit more and say something like on-prem model deployed achieving 90% pass rates.",
+      "start": 517.5,
+      "end": 550.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "A key result should have a quantity in it. Key results should often be paired with a quality so as to mitigate p-hacking. So like pass rate against crap evals, we can get to 90 on bad evals. We need to show that the evaluations measure up against the technicians' expected use case.",
+      "start": 550.0,
+      "end": 576.5
+    },
+    {
+      "speaker": "Francisco",
+      "text": "There's a business product decision that needs to be driven by Will. What is the best possible proxy that we have today to technician utility? It's always going to be approximately. There's no such thing as platonically nailing this down. But Will is responsible for that. And Vladi should take that as an input and optimize against it. There's a tension between where we are trying to drive something that's valuable and at the same time achievable. But I'm just trying to come up with the right structures of accountability and clarity.",
+      "start": 576.5,
+      "end": 622.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "There's a KR that's worth declaring, which is a definitive data set or a definitive eval that represents the benchmark that we think qualifies us to the production deal. Can't get a production deal if it's half-assing it.",
+      "start": 622.5,
+      "end": 641.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Did anybody have suggestions on how to use the rest of our time to improve our alignment? Because more than anything, the Monday meeting is an alignment meeting. If by 11am Pacific every Monday we all feel a really deeply embodied sense of alignment. We know what's up, we know what's most important, we know who else we need to work with. We can drive like mad and deliver things that make us really happy.",
+      "start": 641.5,
+      "end": 679.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "If you want to hack into ownership, you have to love what you're doing. Otherwise it's going to be a horrible job for you.",
+      "start": 679.0,
+      "end": 691.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Better paying jobs that will give you less joy. This is a worse paying job. So we should be joyful.",
+      "start": 691.0,
+      "end": 701.0
+    },
+    {
+      "speaker": "Will",
+      "text": "Agent quality improvements. I'm going to change that to a more specific KR that is focused on a curated data set. That is much better scoped. So that and the product development process with Yumi. We already have a meeting scheduled today.",
+      "start": 701.0,
+      "end": 722.0
+    },
+    {
+      "speaker": "Yumi",
+      "text": "Design system audit that I just found out. Last week I found out that we're using open source icons and components. I'd like to from now on use an in-house system. So this week, kicking off the design system audit work and also working sessions with people to create design system.",
+      "start": 722.0,
+      "end": 747.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I would invite everyone to join me in a commitment, which is that if you have a PR that's non-trivial, you almost certainly had the agent make some mistakes in the process. Therefore, you also own a second PR to the harness.",
+      "start": 747.5,
+      "end": 768.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I will chew through the practices improvements and do my best to turn that into some kind of useful, loose, fluid agenda for our hybrid onsite this week.",
+      "start": 768.5,
+      "end": 782.5
+    }
+  ]
+}

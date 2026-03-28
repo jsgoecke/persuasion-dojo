@@ -1,0 +1,21 @@
+{
+  "session_id": "sample_board_meeting_q4_budget",
+  "utterances": [
+    {"speaker": "speaker_0", "text": "I want to walk you through our proposal to reallocate 20% of the marketing budget toward product-led growth. The data shows that PLG companies in our segment retain 40% better.", "start": 0.0, "end": 12.4},
+    {"speaker": "speaker_1", "text": "Why would we do that? We've built this marketing team over three years.", "start": 13.1, "end": 17.8},
+    {"speaker": "speaker_2", "text": "What evidence do you have that PLG would work in our market? Our customers aren't self-serve.", "start": 18.5, "end": 24.2},
+    {"speaker": "speaker_0", "text": "Good question. Let me show you the retention data. Companies that shifted to PLG in B2B SaaS saw net revenue retention jump from 105% to 142% within 18 months. And our own trial users — the ones who onboard themselves — activate 3x faster.", "start": 25.0, "end": 39.6},
+    {"speaker": "speaker_1", "text": "Have you considered what happens to our current marketing team during this transition? This feels risky.", "start": 40.2, "end": 46.1},
+    {"speaker": "speaker_2", "text": "Isn't 20% a big number to move all at once? That's a significant reallocation.", "start": 47.0, "end": 51.3},
+    {"speaker": "speaker_0", "text": "The reallocation would be phased over two quarters. We'd start with 8% and measure PLG-attributable pipeline before moving to the full 20%. The marketing team would shift toward product marketing and activation — roles that are higher leverage.", "start": 52.0, "end": 65.8},
+    {"speaker": "speaker_3", "text": "What does the activation workflow look like under PLG? How would users move from trial to paid?", "start": 66.5, "end": 72.3},
+    {"speaker": "speaker_1", "text": "How long would the phased transition take?", "start": 73.0, "end": 75.8},
+    {"speaker": "speaker_2", "text": "Can you explain how we'd measure whether PLG is working before committing the full 20%?", "start": 76.4, "end": 82.1},
+    {"speaker": "speaker_0", "text": "We'd track activation rate, time-to-value, and PLG-attributable pipeline weekly. If activation rate doesn't hit 35% by week 8, we pause and reassess. Clear exit criteria.", "start": 83.0, "end": 94.5},
+    {"speaker": "speaker_3", "text": "That makes sense. The phased approach with clear exit criteria addresses my concern.", "start": 95.2, "end": 100.4},
+    {"speaker": "speaker_1", "text": "I agree — the exit criteria are what I needed to hear. That's a reasonable risk management approach.", "start": 101.0, "end": 107.8},
+    {"speaker": "speaker_2", "text": "Let's move forward with the 8% pilot. What are the next steps to get this kicked off?", "start": 108.5, "end": 114.2},
+    {"speaker": "speaker_0", "text": "I'll have the implementation plan to you by Thursday. We'd need sign-off from finance and then we can start the reallocation in Q1.", "start": 115.0, "end": 124.6},
+    {"speaker": "speaker_3", "text": "Sounds good. Let's get this done.", "start": 125.3, "end": 127.8}
+  ]
+}

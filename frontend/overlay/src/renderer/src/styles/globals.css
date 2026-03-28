@@ -1,0 +1,202 @@
+/*
+ * Persuasion Dojo — Global CSS
+ * Source of truth: persuasion-dojo-reference-screens.html
+ *
+ * Copied verbatim from the reference implementation.
+ * Do not modify values without checking the reference HTML.
+ */
+
+/* ==========================================================
+   GLOBAL DESIGN TOKENS
+   ========================================================== */
+:root {
+  /* Backgrounds */
+  --bg-primary:    #1A1A1E;
+  --bg-card:       #222226;
+  --bg-elevated:   #2A2A2F;
+  --bg-hover:      #32323A;
+
+  /* Borders */
+  --border-subtle:   rgba(255, 255, 255, 0.06);
+  --border-medium:   rgba(255, 255, 255, 0.10);
+  --border-hover:    rgba(255, 255, 255, 0.16);
+
+  /* Text */
+  --text-primary:    #E8E6E1;
+  --text-secondary:  #9A9890;
+  --text-tertiary:   #6A6860;
+
+  /* Accents */
+  --gold:            #D4A853;
+  --gold-hover:      #E0B85E;
+  --gold-bg:         rgba(212, 168, 83, 0.08);
+  --gold-bg-strong:  rgba(212, 168, 83, 0.06);
+  --gold-border:     rgba(212, 168, 83, 0.15);
+
+  --red:             #C75B4A;
+  --red-glow:        rgba(199, 91, 74, 0.4);
+
+  --green:           #5A9E6F;
+  --blue:            #7B8EC2;
+  --blue-bg:         rgba(123, 142, 194, 0.10);
+
+  /* Archetype tints */
+  --tint-architect:    rgba(212, 168, 83, 0.04);
+  --tint-firestarter:  rgba(199, 91, 74, 0.04);
+  --tint-inquisitor:   rgba(90, 158, 111, 0.04);
+  --tint-bridgebuilder: rgba(123, 142, 194, 0.04);
+
+  /* Typography */
+  --font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-body:    'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono:    'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+
+  /* Spacing scale */
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  12px;
+  --space-lg:  16px;
+  --space-xl:  20px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
+
+  /* Radii */
+  --radius-sm:  8px;
+  --radius-md:  10px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+
+  /* Legacy aliases (for existing components that reference old tokens) */
+  --overlay-surface:          var(--bg-primary);
+  --overlay-surface-elevated: var(--bg-elevated);
+  --overlay-border:           var(--border-subtle);
+  --overlay-text-primary:     var(--text-primary);
+  --overlay-text-secondary:   var(--text-secondary);
+  --overlay-text-muted:       var(--text-tertiary);
+  --surface-base:             var(--bg-primary);
+  --surface-card:             var(--bg-card);
+  --surface-elevated:         var(--bg-elevated);
+  --surface-border:           var(--border-subtle);
+  --badge-audience: var(--blue);
+  --badge-self:     var(--gold);
+  --badge-group:    var(--green);
+  --badge-cached:   var(--text-tertiary);
+  --status-reconnecting: var(--gold);
+  --status-error:        var(--red);
+  --status-success:      var(--green);
+  --status-learning:     var(--blue);
+  --accent-gold:         var(--gold);
+  --accent-gold-hover:   var(--gold-hover);
+  --accent-live:         var(--red);
+}
+
+/* ==========================================================
+   BASE RESET
+   ========================================================== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  background: var(--bg-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+/* Re-enable selection inside form controls */
+input,
+textarea,
+select,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ==========================================================
+   TITLEBAR / DRAG REGION
+   ========================================================== */
+.titlebar {
+  height: 48px;
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  flex-shrink: 0;
+}
+
+.titlebar button,
+.titlebar input,
+.titlebar a,
+.titlebar [role="button"],
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* ==========================================================
+   SCROLLBAR STYLING
+   ========================================================== */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* ==========================================================
+   ANIMATIONS
+   ========================================================== */
+@keyframes livePulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--red-glow); }
+  50%      { opacity: 0.7; box-shadow: 0 0 0 6px rgba(199, 91, 74, 0); }
+}
+
+@keyframes sparPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(212, 168, 83, 0.3); }
+  50%      { opacity: 0.8; box-shadow: 0 0 0 5px rgba(212, 168, 83, 0); }
+}
+
+@keyframes promptIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes revealIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0%   { border-color: rgba(212, 168, 83, 0.15); }
+  50%  { border-color: rgba(212, 168, 83, 0.35); }
+  100% { border-color: rgba(212, 168, 83, 0.15); }
+}

@@ -1,0 +1,281 @@
+{
+  "session_id": "002_onsite_strategy_mar10",
+  "utterances": [
+    {
+      "speaker": "Sam",
+      "text": "Welcome to our hybrid on site. I want to warn you that we're not going to try too hard to optimize it for hybrid participants. The value of having the office being on site is that all sorts of things are much easier and faster for us. But I do want to scope out some stuff that I've interpreted from the team. Hopefully it was kind of a chance to read the summation of all of the different perspectives on how we improve our practices. Does that make sense?",
+      "start": 0.0,
+      "end": 44.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I want to thank everybody who contributed already. Even if you haven't contributed a doc, obviously you're thinking about it. Everything we want to do at Sailplane is lean, so including we'll prepare for offsites in a lean way. We picked up in under 24 hours what are the team's main concerns. How do we want to turn that into a working product?",
+      "start": 44.5,
+      "end": 76.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "We also want to do work. We want to ship code while we're here this week. We want to work through technical issues around architecture and design. We want to be in the work. Everything can't be at the meta. But if we don't fix stuff in meta, it's just going to keep showing up in the work.",
+      "start": 76.0,
+      "end": 105.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Everyone is welcome. Yumi. And we are still building the team. We know Yumi is here. Why do we hire people at Sailplane? We hire people to fix problems. Our team is not complete. We learned over the last few months and certainly over the last couple of weeks, we're missing a design leader. Now we have a design leader. Today we have two really strong candidates for the remaining piece that's missing from Sailplane, which is principal engineer.",
+      "start": 105.0,
+      "end": 144.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Once we have the principal engineer along with Paul and Vish, I think that the system is complete. We can gel, we can complete the Dell work, we can get through TSS, we can get into Franklin, we can work with human systems and have the deals that we want. And then we're in a good position to scale.",
+      "start": 144.5,
+      "end": 174.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "So scaling means being able to not just have good conversations with Microsoft and Switch and Google and CoreWeave but to be able to convert on those. Right now if I said great, we're going to start Microsoft on Monday, everyone in this meeting should probably be ready to give birth to live kittens. It would be a very awkward and painful experience because we haven't completed the system, we haven't solved our problems, we're trying to gel.",
+      "start": 174.0,
+      "end": 213.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "So the prompt again is, how do we want to spend our time together? Right now, today, this week, as we combine getting stuff done with the meta of improving how we do stuff.",
+      "start": 213.0,
+      "end": 230.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I had an observation this week. I was watching my son's rugby team who had come together probably three months ago. They started doing a haka. And what I was watching was the transformation of a group of individuals into a team that was sharing practices, information. And just watching it was sort of magical. And one of the things I'd love to think about is structurally, as we sort of go through this week. How do we continue to optimize that so that some of the engineers that are focused on writing code understand what the business is doing, why the business is doing it?",
+      "start": 230.0,
+      "end": 283.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "There's a very pointy thing which I talked with Vish about this morning, which is that I asked him to take engineering leadership role at Sailplane for Cumulus. So we're already doing what we're doing to get through TSS. TSS is also very much of a sandbox, but if you're familiar with capability maturity models...",
+      "start": 283.0,
+      "end": 310.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "TSS if I were to put it on that scale, the fact that they ship any racks at all feels like it's about CMM level 2. Vish has looked at it. Paul's looked at it. Neither, both people with deep expertise in manufacturing. It's not by any means a state of the art system. As we get into Franklin and Cork, we're expecting them to be at level four, maybe level five. So the level of engineering we're going to have to go through to progress is going to have to get dramatically tighter on our tolerances in order to get the 7 to 12 million dollar deal.",
+      "start": 310.5,
+      "end": 364.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "So Vish and I talked this morning a little bit about some of these challenges as we go into Dell even further. The Cumulus opportunity is huge getting into Franklin and Cork, but it's going to require a lot of discipline for us to focus on exactly what Dell needs and what we're expected to deliver, and then just keeping super focused because there'll be so many shiny objects. And we have the opportunity to make a heck of a lot of money to expand the company. But we also have the opportunity to spend money extraordinarily fast if we're not focused.",
+      "start": 364.5,
+      "end": 415.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "A question just for my context. And I think I am aware of our business plans. But when I hear about Cumulus integration and I think about that, it's like, how long have we been working at TSS? Four. Since August. We're at month eight. And I look at our runway. We will not have a proven end to end Cumulus solution before our runway expires. Maybe we will, but based on our speed so far, that would be...",
+      "start": 415.5,
+      "end": 455.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I mean, I disagree with the assessment, but I understand the concern. So what we're working through with John is I expect we'll get a million dollar plus deal in the April specifically to do what they call the proof of value. Which is to pay us NRE, non recurring engineering, because they're missing an MES, manufacturing execution system. We think we can get a proof of value deal to get paid for the effort we're going to put into engaging in the Franklin and Cork development. Which will be at least a million dollars, which is three to four months of our burn.",
+      "start": 455.0,
+      "end": 507.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I've also talked with Pneet about raising Seed three. It's an option, but it's not an obvious immediate option. We raised our seed one at 3.4 million on 14. We raised our seed two at 5 million on 28. That's good. We doubled the valuation. We can raise a seed three if we want to. The question that Pneet came back with was you've made so much progress with Dell as a company. You're so close. Do you want to take that dilution right now?",
+      "start": 507.0,
+      "end": 549.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I think the path we're on will get us to a production deal at Franklin and Cork by June. I think we'll get the proof of value done by the end of April, maybe early May. And I think on the strength of that deal and having Microsoft and Switch in development, puts us in an extraordinarily strong position to raise our Series A in June.",
+      "start": 549.5,
+      "end": 582.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "I appreciate the clarification of the NRE and the runway, so at least I now see a ladder.",
+      "start": 582.5,
+      "end": 592.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "We're going to do multiple deals with Dell. The next revenue bearing deal after our 250K will be a million. The next revenue bearing deal after that will be 7 to 12. We're specifying a performance based payout. John may actually deny that and say, we're just going to pay you 12. He made it clear that a flat rate is easier for their procurement to understand.",
+      "start": 592.5,
+      "end": 626.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Then they might expand into the field services, as John described, where the huge money is. Vish has analyzed field failure rates. He thinks they cost the company about 700K per failure. He thinks that there is an incidence of about 5% field failure rates. So just think about the quantity of that.",
+      "start": 626.0,
+      "end": 652.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "So these are probably distinct deals. Our first deal was in ISG Engineering under MJ. Our next deal will be with the CTO office. Our third deal will be with Global Operations at Franklin and Cork. Our fourth deal will be with Field Services. So we're actually going to ladder into four deals with the same customer.",
+      "start": 652.5,
+      "end": 681.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "And the field failure rate analysis. If we had a standalone module, I can tell you Dell would be interested. Microsoft would be interested. It would be a much easier sale.",
+      "start": 681.0,
+      "end": 696.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I hope that was useful context for everyone.",
+      "start": 696.5,
+      "end": 706.5
+    },
+    {
+      "speaker": "Yumi",
+      "text": "I have a little detour question. Maybe it's not really related to it. But is the product tied to data center and infrastructure agents, or does the future concept product evolve and it's going to be not just a data center, but other areas as well? If there is a roadmap.",
+      "start": 706.5,
+      "end": 732.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "We don't have a discrete roadmap, but I'll describe my beliefs. I think in the five year future we'll be in multiple industries. I think in the 24 month future we will be in the data center. The reason for that is AI data centers are the largest and fastest growing homogeneous market in human history. It's very hard to find amazing markets. It's very hard to find amazing markets that are already educated. It's very hard to find amazing markets that are already educated that you have distribution channel into. All three of these are usually the reasons that startups die.",
+      "start": 732.0,
+      "end": 783.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Dell explicitly is asking to find a path to distributing our software to their customers. Couldn't be better. Microsoft also made that offer. They said, we like what you're talking about to help Microsoft, but we think we could be a really good partner for you.",
+      "start": 783.0,
+      "end": 806.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "What I'm going to do is I'm going to take all of this and distill it down so that Sam has an even more powerful talk track. Because we just presented to Microsoft and there were a couple of the folks on the call who understood what we were doing. There were some folks who were like, I still didn't understand exactly how we would use you. And I think the context around the conversation today, if we distill it down, everyone will walk in a room, and within five minutes, everyone understands contextually how powerful what we're doing is and what it means.",
+      "start": 806.0,
+      "end": 858.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "The most exciting thing to me is that we are kind of manifesting the vision of an agent first code base. This idea that was popularized by OpenAI with their harness engineering blog post about how can you have a code base that is autonomously maintained and improved. Field errors, incorporating that as tickets and then having agents solve those. Now, all of that sounds like a pipe dream, right? But OpenAI have made it true. And we ourselves, in a sense, have stumbled upon the same primitives.",
+      "start": 858.0,
+      "end": 902.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "Because we took this very weak code base, which is the VRX test system that was given to us by the Dell team to test the rack. And we supplemented that with playbooks. Now it turns out that playbooks are too late cycle of a ramp. You have to wait 10 hours for evaluation to complete for a play to be useful. And now we're thinking, thanks to analysis, that it's actually much better if we can detect errors earlier. And what is the best way to detect errors earlier? Implement pre-flight checks. Ship tests that we can run against the observable object, which is the rack. That are cheap, fast to run, and very accurate.",
+      "start": 902.0,
+      "end": 960.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "In the future, we can also directly impact VRX code base. And then by performing these actions, you are creating a better end to end system for validation. And I find that very magical. Almost like without human involvement, you're able to close a loop. If you predict that forward, you start thinking about field errors. Which is what Sam was describing. It's the same technical problem. You just expanded the span of control away from validation into field services.",
+      "start": 960.0,
+      "end": 1000.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "Now suppose that it's actually not just rack validation that we're designing right now as a team. It's actually better engineering. The properties and primitives of what we're building, we could literally sell to a startup tomorrow if we want to. Now, when you sell something for $10 a month versus when you have a customer that's going to pay you $10 million a year. We have discovered a niche that's extremely valuable. Because errors are so expensive and recovery from those errors and learning from them is so valuable.",
+      "start": 1000.0,
+      "end": 1045.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Because we're looking for defensibility. One of the things that Francisco and I have learned in the last two and a half years is there's a lot of really fun stuff to do in AI that's not defensible at all. We've carved out a spot where nobody is in our lane. It's not going to remain true. Once we come out of stealth, people will try to figure out how to copy us. But our advantage is going to be that we were here first. We understand it. We've got some depth of character as a team.",
+      "start": 1045.0,
+      "end": 1093.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "My dream, and this is probably too dangerous to say, but I'll say it, is to follow Francisco's insight into looking at CoreWeave's MFU, the model flop utilization metric. If we could provide MFU agents. Obviously that's a ladder. You understand the rack, you understand the cluster, you understand the row, you can characterize the workflow, you can do configuration and you can respond to events. But if you can talk to a customer operating a 10 billion dollar environment and say you're currently getting 15% MFU, we'll raise you to 17%. And you realize that that one thing is worth $200 million to them in the year.",
+      "start": 1093.5,
+      "end": 1147.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "That was provoked by Yumi's question. These are conversations we actually haven't had as a single team. We had them in little pieces and parts. And some of these nobody's been involved in, or some people have not been involved in.",
+      "start": 1147.5,
+      "end": 1168.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "So let's transition into the Sailplane engineering manifesto. Has everyone gotten a chance to dig in? Or should we spend five or ten minutes quietly reading?",
+      "start": 1168.0,
+      "end": 1181.0
+    },
+    {
+      "speaker": "Michael",
+      "text": "I think I want to understand a little bit more about what was coming up. What problem is this fixing? What prompted writing this?",
+      "start": 1181.0,
+      "end": 1193.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "As we figure out how to build the right kind of production systems, and we try to figure out how to hire the right kind of people. We've been tightening our focus on who fits Sailplane, who doesn't. As a tiny company, we have to know who we are, what's consistent about us. So I asked Francisco, what is our standard? How do we know if someone will thrive here?",
+      "start": 1193.0,
+      "end": 1228.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "There's a couple of components here. We have learned empirically that if you write code agent first, you can move fast. You can deliver value to a customer in a semi-autonomous way where you can collaborate with an agent in the planning phase and then collaborate in the implementation phase to ship code fast. We've also seen negative cases of unsafe patterns. Where we have seen tremendous amount of communication fragmentation. That eventually resulted in slow output and also a lot of frustration. So this manifesto represents what I think platonically good engineering will look like going forward.",
+      "start": 1228.0,
+      "end": 1277.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "It's stating declaratively what good looks like within our team and when there's deviation from what good looks like, which includes myself too. We can effectively intervene. The point of the manifesto is growth. We want all of us to grow. And growth is actually extremely uncomfortable.",
+      "start": 1277.0,
+      "end": 1300.5
+    },
+    {
+      "speaker": "Francisco",
+      "text": "One of the things that this will actually test among ourselves is our ability to be polymathic in our work. Where if we are given a KR, we need to own it. The buck stops with you. There's nobody else to delegate to. And the nature of KRs is not low level implementation detail. It's actually something that really matters to the business.",
+      "start": 1300.5,
+      "end": 1332.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "So that means if you have spent most of your career in low level or agent engineering work or machine learning work, now you have to learn frontend. Now you have to learn backend. You have to do product prioritization and high quality engineering. You have to do a lot of things that you actually weren't expecting to be doing. Because you may have bucketed yourself into one specific job to be done. That's not what we can do here.",
+      "start": 1332.0,
+      "end": 1372.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "The antithesis of this is that we just go slow. The antithesis of this was classic software engineering. Gates, layers, roles, phases. Every single thing the way it's been done for 50 years. And what Francisco and I both have become convinced of in the last two months is that the systems of agents change everything. Because so much of what we used to rely on others for, we can become much more self-sufficient.",
+      "start": 1372.0,
+      "end": 1409.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Everyone is not familiar with the extreme agile and DevOps movement. There's a pretty awesome book called Accelerate by Nicole Forsgren. She spent her PhD studying what makes fast software teams fast. Batch size is often the biggest initial limitation for teams that are trying to improve their velocity. Their batches are too big, their batches need to be smaller.",
+      "start": 1409.0,
+      "end": 1439.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "So when I look at this opening set of conversations. Annotation and Mini ACE was not a thing for one day. It was a broken starting concept. And cursory inspection from this rubric would have immediately given up that this is bigger than the breadbox. It's going to take longer than a day. And so then we come back to, what's the smallest proof of value? What's the feature that you can ship end to end in one day?",
+      "start": 1439.0,
+      "end": 1478.5
+    },
+    {
+      "speaker": "Francisco",
+      "text": "Once you work on agents, you see the entire world through the lens of optimizing agents. In such an environment of high stochasticity, you actually have to explore probably as much as you exploit. Meaning you cannot pre-plan a feature successfully for multiple weeks in advance. You're very likely to be wrong and you're very likely to be wasteful in the process. So you're better off scoping things in meaningful scope, high quality, but at the same time high value. Over the course of a day with extreme amount of leverage with agents.",
+      "start": 1478.5,
+      "end": 1525.0
+    },
+    {
+      "speaker": "Yumi",
+      "text": "Maybe if we have a follow up conversation around this. I'd like to see the perspective of how people perceive this manifesto with design. I think there are some points that designing experience sometimes takes time because we are designing for users who use it and operate it. And to understand how design can work within this manifesto and the process, how can we define that?",
+      "start": 1525.0,
+      "end": 1558.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "We're articulating a highly controlled play that requires a strong foundation. You don't suddenly wake up and run seven minute miles for a marathon. There's a super strong foundation. I don't know that we understand how to do that, but we are taking a point of view.",
+      "start": 1558.0,
+      "end": 1581.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Thank you for engaging. And I think if this is a new style of play, it will be upsetting. The neurobiology will respond to it negatively. That this is weird. This is going to be expensive. I have to think about this. Give yourself some grace for that. Drink water, breathe, and then we'll come back through.",
+      "start": 1581.5,
+      "end": 1610.0
+    }
+  ]
+}

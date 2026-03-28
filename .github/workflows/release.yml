@@ -1,0 +1,99 @@
+name: Release
+
+# Triggers on version tags: v0.1.0, v1.2.3, etc.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release-mac:
+    name: Build, sign, notarize & publish (macOS)
+    runs-on: macos-14        # Apple Silicon runner — builds arm64 natively
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        working-directory: frontend/overlay
+
+    steps:
+      # ── Source ─────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Runtime ────────────────────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/overlay/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Code-signing certificate ────────────────────────────────────────────
+      # CSC_LINK is a base64-encoded .p12 exported from Keychain.
+      # electron-builder reads CSC_LINK + CSC_KEY_PASSWORD automatically.
+      # We also import it into a temporary keychain so codesign can find it.
+      - name: Import signing certificate
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+
+          echo "$CSC_LINK" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$CSC_KEY_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s -k "" "$KEYCHAIN_PATH"
+
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain
+
+          rm -f "$CERT_PATH"
+
+      # ── Build, sign, notarize ───────────────────────────────────────────────
+      # electron-builder calls notarize.cjs via the afterSign hook.
+      # --publish always uploads the final artifacts to the GitHub Release.
+      - name: Build & package
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # electron-builder reads these for code-signing automatically.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # Inject the Sentry DSN and auth token for source map uploads.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: npm run package -- --publish always
+
+      # ── Notarization verification ───────────────────────────────────────────
+      # This is the key step the TODO captures: verify BOTH the initial .dmg
+      # AND the electron-updater update payload listed in latest-mac.yml are
+      # accepted by Gatekeeper. Fails the release if either is missing or
+      # rejected, preventing a silent update failure on existing installs.
+      - name: Verify notarization (all DMG artifacts)
+        run: bash scripts/verify-notarization.sh dist
+
+      # ── Keychain cleanup ────────────────────────────────────────────────────
+      - name: Clean up keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain" 2>/dev/null || true

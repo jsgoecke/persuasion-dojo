@@ -1,0 +1,227 @@
+{
+  "session_id": "004_kpi_dashboard_feb27",
+  "utterances": [
+    {
+      "speaker": "Sam",
+      "text": "Hey, I really like the letter that you sent out. I think that we couldn't have been clearer. And I thought it just struck a really nice balance between directness, but also, hey, help us help you.",
+      "start": 0.0,
+      "end": 18.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "Good. We'll see. John definitely saw it. And I texted him after, too. And he said, yeah, got it. He said he and Ken are going to look at it. This is a good day to get stuff in front of John because it's his ops day. So he's going to be getting people mobilized for next week.",
+      "start": 18.5,
+      "end": 47.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "So you set up the KPI meeting for Monday. Is there anything you want me to come prepared for that?",
+      "start": 47.5,
+      "end": 57.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Yeah. So I wanted to talk to you a little bit about the KPI meeting. I was talking with Will and Yongmin about the dashboard that Yongmin had created. I think Will is grateful for the guidance that we're giving him. Along with that came a little uncertainty as to what we want to display. To align to the business metrics, which is good, because that's the way I was trying to lead him there.",
+      "start": 57.5,
+      "end": 95.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "And he was like, listen, this all makes sense now. We need to make sure that those blocks build up to meet the business metrics and the milestones that the business is setting. So if you can help me set those, then we can work backwards from there. They're probably going to be KPIs that are just independent of the business metrics that we need to keep for good housekeeping. But I think the discussion on Monday is about what do we believe is important.",
+      "start": 95.0,
+      "end": 137.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Because initially we focused on what was important to Liz and MJ. And so we built out a set of metrics that satisfied Liz. But as we go forward, some part of those metrics should carry forward. But there's probably a larger set. And the other question they had was, do we set this up for TSS only? Because what we're doing at TSS is going to be a little different than what we do at other locations. And so let's make sure that we're collecting the right metrics. We're setting the right KPIs for the team and we don't over index on the focus on Liz.",
+      "start": 137.5,
+      "end": 191.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "And I also really encouraged Yongmin to don't be a passive passenger. You understand data better than we ever will. And so you know what we have. Let's find things that work for you. And if you don't think things make sense, tell us and we'll refocus. And he was, they were both super excited.",
+      "start": 191.0,
+      "end": 218.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "We are never going to regret increasing everyone's agency.",
+      "start": 218.5,
+      "end": 228.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "Yes. Agreed.",
+      "start": 228.5,
+      "end": 238.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "I think maybe just to put a quick comment on this. Probably the most startling and striking KPI that we got from the dashboard was the improvement in first pass yield. And the thing that is intuitive to me is that if you give people a checklist, and they follow the checklist, typically you get those types of returns. It happens in any kind of setting. You go to a hospital setting, you give them a checklist, things work better. But we don't know that.",
+      "start": 238.5,
+      "end": 281.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Sorry. When you say we don't know that.",
+      "start": 281.0,
+      "end": 291.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "We don't know that it's because of Sailplane that we're getting the reduction. What we need to prove is that the fault mix that's in our validation base, our staging base, is the same fault mix that we're seeing elsewhere. And that we're not seeing better technicians at our staging areas than the rest of TSS, because those two things can dramatically influence that number.",
+      "start": 291.0,
+      "end": 323.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "No, for sure. And that's definitely happening right now. Will and I talked about this yesterday. The fact that the only ones that are trusted to use it are the senior techs. We can't actually disentangle the senior tech effect from the agent effect yet. But I'm okay with that. Because as we move into the next phase, we're going to increase the speed of the flywheel on gathering senior tech feedback, which is our major gaping hole.",
+      "start": 323.5,
+      "end": 362.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "Yeah.",
+      "start": 362.5,
+      "end": 372.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "And if we can raise every junior tech to perform like a senior tech, then we will see the same lift. So I think this raising the floor is okay. Because we're already saying this is not canonical. This is cautionary. This is what we saw as of 2/21, and we're going to keep refining this through 3/21.",
+      "start": 372.5,
+      "end": 401.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "You and I are exactly aligned and I'm not worried about that. To me, it was more, we can at a minimum rebaseline against the fault mix. And that'll actually give us quite a bit of substance. Yeah, we're actually increasing first pass yield if I can get everybody up to senior tech levels. Because if the fault mix is just that they happen to be easier in our bays for whatever statistical reason, then that could also be a penalty against our numbers.",
+      "start": 401.5,
+      "end": 443.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "So that's uniquely what Yongmin is looking through now. It'll also give us a lot more visibility into what are those faults. Should we be doing something specific in terms of our playbooks based on the frequency of some of these faults? The big one is we could start to do some better attribution on first pass yield. Like 3x first pass yield. That's amazing.",
+      "start": 443.5,
+      "end": 476.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Yeah. I don't know how to. What to attribute it to. Like, did we just roll twenties? We just had better builds?",
+      "start": 476.0,
+      "end": 487.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "Well, we'll find out with the fault mix. It'll come back to technician scope and Sailplane agent. So it'll be the two. And I think that's a fungible KPI because they're one and the same. We're actually training the agent to be the best technicians.",
+      "start": 487.0,
+      "end": 509.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "So to me, as long as I can extract out the fault mixes, then we can rebaseline and be pretty confident that we're not dealing with different complexities of faults or different frequencies of faults.",
+      "start": 509.5,
+      "end": 527.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "This is just an insane result. But look at the P value. And the lift.",
+      "start": 527.0,
+      "end": 537.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Can I ask you guys a question? We have a good result right now. And I'm just thinking about, we're going to drive it like we stole it. We should show up on the Dell call and be like, hey, we just have some preliminary results.",
+      "start": 537.0,
+      "end": 560.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "Franklin is going to be the prize for us because by every indication, looking at it, they are validation limited, not build limited. And that's largely because of the dwell time per rack. People are just hanging out. And so that could be that they don't have enough access to engineering or whatever it is. But we're going to have immediate impact when we hit Franklin based off of the TSS experience, and we may actually be able to increase throughput, which is the golden grail for us.",
+      "start": 560.0,
+      "end": 604.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "Hey, could you guys maybe give me the 10 cent tour on the Microsoft meeting?",
+      "start": 604.0,
+      "end": 614.0
+    },
+    {
+      "speaker": "Paul",
+      "text": "The foundation that Sam built at the front end of the call. Sam positioned Sailplane using a number of examples from the industry, framing the problem better than I've heard anyone frame it so far using statistics that were impactful. I could see visually on the call that people are like, oh, that is a big problem. You could see the head nods.",
+      "start": 614.0,
+      "end": 645.5
+    },
+    {
+      "speaker": "Paul",
+      "text": "I really could not read the room because some folks had inscrutable faces. Some folks wanted to give this the old college try. I did get the sense there was a general interest, but I also got the sense from a couple of the folks who didn't quite know if this was a problem they're having because they weren't close enough with their manufacturing to know what the problems were.",
+      "start": 645.5,
+      "end": 680.5
+    },
+    {
+      "speaker": "Paul",
+      "text": "The way that Sam did the call. It was the emotional distance that he created. There was no, this is a problem, you guys got to pay attention. There was no FUD. It was like, this is what we do. And if you get it, you get it. And I think when you have a bunch of people who have really high opinions of themselves in the room, they're like, wait, I get things.",
+      "start": 680.5,
+      "end": 717.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "What's different about me is I authentically don't give a fuck. Unless you're one of my 20 trusted people, like you guys are. I actually don't care what you think. Not in a savage, vicious way. But I'm not conditioning my life based on your opinion.",
+      "start": 717.5,
+      "end": 740.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "They spent 50 minutes with us. Brijat's a senior guy. And he said, look, I don't want to waste your time doing a bunch of initial calls. Give me a short demo of the product as a video. I will take this around to a few people, and if they see the opportunity and they respond with urgency, I will bring them back to you.",
+      "start": 740.5,
+      "end": 773.0
+    },
+    {
+      "speaker": "Paul",
+      "text": "Yesterday I had a call with TJ. And what I'm realizing now is I don't need to establish a full security program for Sailplane right now. What I need to do is make sure that the Dell security questionnaire is completed as quickly as possible, because that would be the gating item to the contract, not whether we have a fully blown security program.",
+      "start": 773.0,
+      "end": 805.0
+    },
+    {
+      "speaker": "Paul",
+      "text": "The proposal is to do security in a two stage program where the first element will be to focus on completing that Dell security questionnaire. And then the second part would be to build out a more fulsome security capacity.",
+      "start": 805.0,
+      "end": 825.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I trust you. What is your proposal?",
+      "start": 825.0,
+      "end": 835.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "I think it's adorable for us and just even being able to dangle, you know, we're obviously considering this in our roadmap. And you're going to get a dividend because we've got a guy like Paul who's guiding it, and he has experience. Not just academic.",
+      "start": 835.0,
+      "end": 858.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "All proper enterprise deals are multi-threaded. I know Mark Russinovich, who's the CTO of Azure. I know Scott Guthrie, who's the president. I'm not going to hit them up until we've got a little bit more grounding. Head of security, I think is exactly right.",
+      "start": 858.0,
+      "end": 880.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "Paul, I'll maybe let's connect after and we can put a little brief together.",
+      "start": 880.5,
+      "end": 890.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Mark Fox is not available the week of the 9th. He was super impressed that we would be. He's like, you don't waste any time, do you? I said, yeah, there's not a moment to lose. So our opportunity to go to Franklin will be either the week of the 16th or 23rd.",
+      "start": 890.5,
+      "end": 917.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "The week of the 9th I'd like to have it be a San Francisco onsite. Choose your own adventure. All right, I'll see you on standup.",
+      "start": 917.0,
+      "end": 930.0
+    }
+  ]
+}

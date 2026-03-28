@@ -1,0 +1,251 @@
+{
+  "session_id": "003_subagent_retro_mar06",
+  "utterances": [
+    {
+      "speaker": "Michael",
+      "text": "I do think it's worthwhile to stay on this and go through these because we've now built up the state machine. And then after this, we'll go to the ACE retro.",
+      "start": 0.0,
+      "end": 15.5
+    },
+    {
+      "speaker": "Will",
+      "text": "So as describing my confusion here. It's rather not my confusion, but my agent's confusion that I am reporting on behalf of. I'm working on observability, and so I am thinking about how to get observability data both from TSS in Austin and from TSS in Staging. And both of these have the same URL and the same name. And I know how they differ, but I have to explain to Claude every time how they differ. I've made a document and that explains to Claude this information. But it seems to forget after a conversation becomes long enough.",
+      "start": 15.5,
+      "end": 65.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "I had this magical moment yesterday where we had an issue reported by the techs over Microsoft Teams, and my immediate instinct to solve it would be to do a lot of manual work. Open the dashboard. Ask people around for logs. But instead I just tried to get Claude Code to do it with CLI. And results were pretty magical. I copy pasted the issue that we had seen in production and asked it to create a PR and investigate what's going on. Eventually was able to figure out what was the problem. Which was a bit of a needle in a haystack problem of identifying an environment variable that was passed incorrectly. Where we passed TSS_GE instead of TSS as an environment variable. And was able to actually get a fix out in about 30 minutes.",
+      "start": 65.0,
+      "end": 134.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "So that's 8am through 6pm kind of showing. That's this past week. This is the week before. The week before that. And as I look at what next week looks like, it's already mostly blocked with standing meetings. So I clearly need to do some substantial surgery. This is a lot like the calendars I used to have when I was a level 10 vice president at Google. Also similar to being a VP of 1100 person organization at Autodesk. That was probably appropriate there, but something has gone terribly wrong for me.",
+      "start": 134.0,
+      "end": 180.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "It's gotten to the point where I don't have the focus time and frankly, everything comes out of some end of my sleep. So I'm straight up exhausted. I think by the time I get to my 2pm today, I'm just going to call it a weekend because I'm just completely out of gas.",
+      "start": 180.5,
+      "end": 207.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "Thanks for sharing, Sam. That helps bring some empathy. Why you are often slow to respond. You might be slow to respond on Slack because you are context switching madly between meetings.",
+      "start": 207.5,
+      "end": 223.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "The best way to destroy a person or an organization is to have unbounded work intake. When I took over teams, I used to have to go and do polls of how people actually work. You're like, oh, this vice president was just walking through the department and he said wouldn't it be good if, and all of a sudden that became somebody's work. So work intake is the first thing. You have to have a firewall so that you don't get bad traffic in your brain.",
+      "start": 223.5,
+      "end": 267.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "One example of the vice president drive-by was, and we'll get to this in the retro on the feature, I believe that from talking with TJ, he said we're going to need time machines in TSS. Which I believe became work intake for Michael to start to try to figure out how to build time machines in TSS. A very casual utterance. Not a well scoped request. Not even necessarily a request made, but certainly a request heard.",
+      "start": 267.0,
+      "end": 306.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "So I wrote up the situation to make it easier to scan. We need to just walk through this 2020 hindsight blamelessly and identify a few fixes or a few new practices that will get us healthy.",
+      "start": 306.0,
+      "end": 324.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Breathe in through your nose. Breathe out through your nose. Do that a couple of times. Just kind of shed the emotion. This is not where we want to have our emotion clouding our thoughts.",
+      "start": 324.5,
+      "end": 342.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Francisco, TJ, Vladi, Will and Yumi, Michael, and Sabrina were all involved in this feature to different numbers of hours across the last 10 days. We may have learned some stuff along the way. Effectively, we threw away about a week's worth of team time. So we should never do that again.",
+      "start": 342.0,
+      "end": 368.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "So I want to start with just asking the question. How was this feature incepted?",
+      "start": 368.0,
+      "end": 378.0
+    },
+    {
+      "speaker": "Vladi",
+      "text": "In my recollection, it came from a product brief of Will. From maybe two weeks ago. He was feeling already that the agent is not easy to improve anymore. So then it happens, this feature of the sub-agent chat and remediation. And then for that reason we don't have data set anymore. So then he was thinking, how we get this in a fast way and also taking into account that we can get annotations. So he proposed this idea of this annotation feature.",
+      "start": 378.0,
+      "end": 420.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "So Will intercepted that. Wrote it in a note. And then invited some level of feedback? Or was the note just taken as like, this is the plan, now everybody's job is to follow the plan?",
+      "start": 420.0,
+      "end": 438.0
+    },
+    {
+      "speaker": "Vladi",
+      "text": "I think he proposed and we had a conversation, a brief conversation on Tuesday with DJ and Sabrina. We said yeah, we can make it. But I think we didn't have a conversation of the user experience.",
+      "start": 438.0,
+      "end": 456.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "How was it designed? The upfront feature was like, here's the motivation, it could work like this. What was the design process? Who designed it or how was it designed?",
+      "start": 456.5,
+      "end": 471.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "I think on Monday or Tuesday of last week, we were discovering what the feature was, the boundaries, coming up with a data model. And figuring out how to implement it technically. I don't recall the feature design at all.",
+      "start": 471.5,
+      "end": 491.5
+    },
+    {
+      "speaker": "Vladi",
+      "text": "There was not, I would say. We moved from here's what we want to implement into how can we implement this. So the product brief became the design basically.",
+      "start": 491.5,
+      "end": 506.0
+    },
+    {
+      "speaker": "Francisco",
+      "text": "I don't know exactly in which stage of the process I joined, but the only meeting I remember was a group meeting. He presented that to us, and I don't think that was scrutinized. I think we went straight into implementation detail and kind of figured out who was going to own this going forward.",
+      "start": 506.0,
+      "end": 533.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Did we understand the smallest pieces of value that we could prove, like on a day by day shipping basis before we tried to build the entire system?",
+      "start": 533.5,
+      "end": 547.5
+    },
+    {
+      "speaker": "Francisco",
+      "text": "I concentrated my help into kind of helping the team execute and implement the feature. I didn't actually even think about the product proposal. It didn't feel like the meeting's purpose was actually for us to review the product itself.",
+      "start": 547.5,
+      "end": 567.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "How was the technical design done? Can we reflect for a minute on what we thought we were doing on the 23rd, 24th? What were the artifacts we were aiming to produce?",
+      "start": 567.5,
+      "end": 583.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "Too much back and forth. We needed to make sequence diagrams so everybody was on the same page. And I finally did that on Thursday. And so we wasted, I think, two days just talking rather than having a full specification. And then we had a lot of extra back and forth after that because some of the implementation was actually very tricky for the communication between these services, and we couldn't pick the best way.",
+      "start": 583.5,
+      "end": 621.5
+    },
+    {
+      "speaker": "Vladi",
+      "text": "On the 24th we met. We kind of did a design, but it was more like how we implement this and trying to make the pieces, but also we tried to distribute the tasks. After that meeting, my task was implement Mini ACE, and that was mine. So I didn't say more about that.",
+      "start": 621.5,
+      "end": 648.5
+    },
+    {
+      "speaker": "Vladi",
+      "text": "This week we spent a lot of hours because we already implemented previous week the very worst implementation ever. So then DJ said, how we move this to production. So then we noticed a lot of tricky things. And we ended up that the best option probably was the first option that we already had. Like previous week.",
+      "start": 648.5,
+      "end": 677.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "How did we communicate about the technical design?",
+      "start": 677.5,
+      "end": 687.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "I think it would have just littered the chat.",
+      "start": 687.5,
+      "end": 697.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Were there moments where you observed, reflected, where you had concerns? Maybe you didn't share the concerns. Was there a moment of metacognition where it seemed like this was not making sense? Or was everyone so deeply embedded in getting it done that that did not happen?",
+      "start": 697.5,
+      "end": 721.0
+    },
+    {
+      "speaker": "Vladi",
+      "text": "From my side, after some days, I was thinking, this is kind of not working. And it's also because we are going so fast that we feel that we have to do it. So I think that was what I felt and that was personally what I felt as well.",
+      "start": 721.0,
+      "end": 746.0
+    },
+    {
+      "speaker": "TJ",
+      "text": "On Tuesday, after reviewing it and going to lunch and throwing out three designs. I was like, this feature is complicated. And it's going to be really tricky to pull off. And I was like, maybe we can do it with agents, but I'm not even sure. So I knew that on Tuesday. But I was like, this is important to get done for the company. Let's just power through this. Even though all my instincts said this is going to take a little longer than it probably should. And then I didn't even consider production deployment at that point. And I compromised a bit too much. And I should have just not done that personally.",
+      "start": 746.0,
+      "end": 804.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Effectively, we threw away about a week's worth of team time. Any of us could have come up with a fix for this way earlier. Like for example, the feature we shipped on the 27th, shipping annotations and test cases. I believe that is simply an RBAC switch that would enable technicians to use the existing product engineer annotation. So that is somewhere close to about two minutes worth of work. It could have been done on Monday the 23rd.",
+      "start": 804.0,
+      "end": 844.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "The most important reason for us to be able to do this is that we are building agentic systems. Our harness is going to get better and better. And it's going to be easier and easier to produce more and to lose coherence entirely. Because if we're not building outstanding skills for how the humans have a shared understanding and our ability to communicate and improve what our plan is, we're going to come apart.",
+      "start": 844.0,
+      "end": 881.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Cavitation is what happens when you have a vehicle that is trying to exceed the speed of the medium that it's moving through. We got very excited about being able to write code faster, but we've also hit a limit. Our understanding, individually and collectively, of what we're building and why it's valuable came apart. We're looking at about two weeks of some various combination of the team's work. And we're just going to throw it away. So we want to make sure that we don't cavitate and tear up the company.",
+      "start": 881.5,
+      "end": 927.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "I just want to add one little addendum here. Some of the work was necessary. For instance, we needed the correct time machine step on the launch validation annotation. And so that work was required no matter what.",
+      "start": 927.5,
+      "end": 946.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "That's awesome. So we're only going to throw away 97% of the work. Only 97%. Even a broken clock is right twice a day, TJ, is what you're telling me. So we need to embrace each other's humanity. The limitations of our own lives. We're all going to die. We don't want to regret any days.",
+      "start": 946.5,
+      "end": 974.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "The really good news is Yumi is going to fix this all. Because if you look at the questions I've asked. How is this feature incepted? And then how was it designed? That's where all of the problems actually came from. And the problems were unrecoverable because we were all stuck in an emperor's new clothes environment.",
+      "start": 974.5,
+      "end": 1003.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "In the future next week, there may well be a product brief. And then the next thing that will happen is Yumi will grab the product brief. Question it. Through those questions, it will improve. And then there will be a design. And so that design is going to consider what do we already have in the product. We have to have a design step.",
+      "start": 1003.0,
+      "end": 1035.5
+    },
+    {
+      "speaker": "Yumi",
+      "text": "I was brought this project very late on, I think yesterday or day before. And what I could tell is there's still need. I just noticed that when I was asked certain design opinions or perspective, it was more like I was brought to fix something, not about making improvements. It was more like, we have this issue after we designed something technically. How can we fix that? And I think in ideal world, those kind of things should have been answered in the very early stage. I would love to engage in the early process and share and do a lot of pressure testing and asking questions and designing with everyone's help.",
+      "start": 1035.5,
+      "end": 1092.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I was really happy to see Yumi quickly sketching out the interaction pattern just on the whiteboard with question marks in exactly the right spots where a miracle has to occur in order for the thing to work. And she was like, I don't understand how this piece is going to work. And it's like, that's a good place, because that's exactly where it's not going to work. I think this is going to be a lot of fun when we develop things that are design led.",
+      "start": 1092.0,
+      "end": 1135.5
+    },
+    {
+      "speaker": "Michael",
+      "text": "I am curious if you think that the project management itself deserves a retrospective or if that should be part of the technical retro.",
+      "start": 1135.5,
+      "end": 1147.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I didn't see this as a technical retro. The feature inception lacked any feedback. The grounding was weak, the assertions were weak. It was actually not designed. There was no design step. Even the most cursory inspection of the feature, which I did on Wednesday, I asked some really basic questions about what's the user latency budget. And it was like five minutes, maybe ten. I was like, that's a huge cognitive gap. It didn't take me long to see the huge gaps. So 30, 60 seconds asking that question. Very easy to find bad decisions in every direction.",
+      "start": 1147.5,
+      "end": 1197.0
+    }
+  ]
+}

@@ -1,0 +1,227 @@
+{
+  "session_id": "001_design_practices_mar10",
+  "utterances": [
+    {
+      "speaker": "Sam",
+      "text": "Vish. Still in my hammock. It's all right. I mean. Hasn't really recovered since last Sunday, unfortunately. You know, I've had years where it's been good, but since starting at Sailplane, it has. No. What's. What's your back problem?",
+      "start": 0.0,
+      "end": 19.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "Michael and Francisco are finishing up a debug session, but I believe they have read the document. So we thought we'd start with five minutes quiet reading so that we can hop in.",
+      "start": 19.5,
+      "end": 36.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "No, I already posted the link to Pinball, so that should be able to February. We can see it.",
+      "start": 36.0,
+      "end": 46.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I think probably 22 more minutes, based on what I see. I read it a couple of times. And I spent about a half an hour on my drive in going back and forth, having a conversation with Claude about your document. It's pretty cool.",
+      "start": 46.0,
+      "end": 68.5
+    },
+    {
+      "speaker": "Yumi",
+      "text": "Will and I are working on this process. How we in terms of the working process, what's the baselines and what we can do before we actually kick off the implementing it. There will be a certain startup for sure that they and I need to take. Such as testing the whole checking out what's the most user scenario and the flow look like. Even if we're given a short time, we just come up with a short lo fi. We'll need to check tech limits or what? Can we do it? And if we have to scope it down, what is the necessary thing so we can kill, remove and move forward. And those things that we are working on to iron out, what's the process Will look like? And Will's plan is we're going to try the first test run with Francisco. Island is here until we have actual principal engineer who is going to be main driver within this design process. And so we're in the process of defining that. We don't know how long it's going to take, but if we are trying to focus on design center user experience and very company, this is something we cannot just ignore and move on. We have to spend right amount of time to iron out and should create friction. I just wanted to make sure and transparent here that we both Will and I working on it. With his experience with the team and my experience for the past process, we're just going to figure out how this going to be and then share with team initial time period.",
+      "start": 68.5,
+      "end": 204.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "It makes a ton of sense. I mean, to me, the 15 minute design gate. Means that the gate itself is short because clearly communicated design should reveal its issues because that reason is not going to have an issue. But the flash to be revealed to anybody within 15 minutes doesn't mean it took 15 minutes to make the design. The design takes the time that the design takes. And we'll figure out how to make that lean and sort of more controlled, more rounded. But the proposal, I think, and what I liked about this document was that Vishes identified sort of eight patterns, were pretty much all things that the group came up with as important practices they want to adopt. So I thought this was a good almost framework following up from the first principles that how does this all relate to our actual practices?",
+      "start": 204.5,
+      "end": 279.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "Based on sort of the pressure of the last two weeks. We're in a discovery process of how to do how to do design at Sailplane, but we should not decide that we're going to start implementing something if it hasn't gone through 15 minute design gate. No matter who designed it. I can go to this too. I've designed the branding feature. I thought I did a decent job. Turned out I had a lot to learn. I went through the process. I should have. Done. If I were to do it again under this process, I would have had a brief. I would have said, it's going to work like this. This is my motivation. Here are my use cases. And then had anybody else, at least one human being, plugged it 15 minutes. And they were to say, do you think about this? Do you think about this? And then I probably would have gotten it done in a day. Instead of dribbling it out over four half days across a week. I'm just trying to personalize the error so that everyone can see. Francisco said earlier, right. The rubrics were offering. Don't apply to others. They applied to us, too. Trying to lower the cost, to say, like, oh, yeah, I had this issue. Here's how I want to fix it. I was flawed as anybody.",
+      "start": 279.0,
+      "end": 394.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I think I've been annoying Yumi over the last two days because as we've been talking about how our agent first and how we almost decentralize the design work to enable the team to go faster, we were running through the numbers of how long does it take? Lo Fi. How long does it take to make a hi fi? And if we have five engineers on a team, hypothetically, and each person shipping one feature per day, we're spending 25 features per week. How long does it take for the design steps to exist? We're figuring out how this new world looks as we're agent first and what we can offload into our code base so that it doesn't actually require a physical design step. So those are going to balance as we transition.",
+      "start": 394.0,
+      "end": 461.5
+    },
+    {
+      "speaker": "Yumi",
+      "text": "Yeah. I'm glad that you express from it that way. Right. Because in a world that we're all agent first, and we're all interacting with the same code base. You're still dealing with both the physical and metaphorical merge conflict of making sure our work actually connects together.",
+      "start": 461.5,
+      "end": 485.5
+    },
+    {
+      "speaker": "Yumi",
+      "text": "We have a design merge failure in our shipping product. I don't mean look at the annotations experience that is completely falling apart. That higher level merge conflict. It exists at different levels, right? One of them is fundamental user experience level. But you also see it a lot in the interaction design and aesthetically the UI looks beautiful in some areas. Doesn't look as beautiful in others. Because our adoption of our quasi design system is also very variable, where some teammates actually treat that as a suggestion or it's treated more as like a rule, and then you see inconsistency created that way.",
+      "start": 485.5,
+      "end": 538.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I think there's like a question I have for you. For you. Me, right, which is, like, what would be your dream job look like? Right? In a world where you have extremely powerfully amazing engineers that are shipping features at a very high rate, in what role? How will you build? What must have be actually collaborating with that team.",
+      "start": 538.0,
+      "end": 568.5
+    },
+    {
+      "speaker": "Yumi",
+      "text": "This is a very unusual situation in the real world that any idea bring to the table. It's like same as the first field my design. I probably have very low chance of passing the risk scale and this place is different. Any ideas welcome and everyone will try to make it happen. So that is also something I am not right now natural or feels more comfortable about which I am trying to train myself things very differently. Which is like when I get product work from the partners, the first thing is what is the limit? That's the first thing I start thinking about what I shouldn't do. Instead of what can I do. So right now, I am figuring that out.",
+      "start": 568.5,
+      "end": 630.5
+    },
+    {
+      "speaker": "Yumi",
+      "text": "And also I don't think I still have very solid understanding of one simple goal that our product is trying to solve. Like any feature work or anything we try, we need to fix. We need to solve one simple problem. What is the one grounded idea? And I am trying to define that. What is the one big simple question that we have? And all this work that I'm doing, going to touch to that to fix that. Is something I'm planning to do this week.",
+      "start": 630.5,
+      "end": 674.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "Concrete suggestion, just kind of a bit for how we think about this, which is there's a new user. Average teams build software for a user of the software. Great teams build things for a user of the software and another user is the developer of the software. You can often look at do people have like a bunch of crappy scripts or they have an internal platform. But there's a third user, which is the agents. And I think that's kind of what's going to make the next generation great plus team. So as you think about your design language, as you think about your design system, an agent must be able to read the design system. That's I think what we're trying to evoke here. There's a new user. So let's design for those three critical user groups. If we leave any behind, we've missed the work.",
+      "start": 674.0,
+      "end": 748.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I think we're good on that one.",
+      "start": 748.5,
+      "end": 758.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "I don't want to sidetrack things, but I do think that some portions of the XP, like pairing, might be useful for us to try. You know, just an idea.",
+      "start": 758.5,
+      "end": 773.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "What does it solve? The assault? Solving feedback on inception? Or just in the context of the conversation we're trying to have with thoughts on dev practices?",
+      "start": 773.5,
+      "end": 787.0
+    },
+    {
+      "speaker": "TJ",
+      "text": "So instead of one person coming with a design and kind of review, pairing to come up with a design together. You know, you start off with that process. Just a thought.",
+      "start": 787.0,
+      "end": 803.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I don't think it's going to reduce the defect. It might improve some aspects of the design. If people prefer to pair for designs. I totally get that. But it does not work to replace the review because you're going to create a captive audience where you're going to have a level of groupthink, and that was part of what failed in the last two weeks. So I think the point here about improving the quality here is a disinterested person who had nothing to do with the design takes a look, does their best to ask questions, to understand it. And if there's gaps where it's like, okay. You called Yumi the miracle detector. Two miracles had to occur in order for the annotator mini ACE to work. Anybody could have been the miracle detector. And that's the purpose here. It's not about how you produce the design. It's how you defect it. So the pairing is not going to improve the defects.",
+      "start": 803.0,
+      "end": 885.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "One of the things that just an observation that I've noticed is we are all like. When we're talking about an idea, we're all very polite to each other and we don't challenge the ideas. And I can tell you from AWS where it was insulting to walk in the room. We had an idea like you walked out feeling like you were the dumbest person in the world because it was torn apart. And that was Jeff Bezos's monster. This is the way that they got to good was to challenge every aspect of it. But that also required everyone understanding that the idea, when you present it, was not a reflection on you personally, it was just an idea. And so you were able to challenge these ideas in ways that ideally felt hurt that they came up with it. In an ideal world, you're able to put an idea on the table, everyone looks at it, they rip it apart. Not in an insulting manner, but they challenged all the assumptions. And then you're basically coming, hopefully, at the end of that process is there's an idea that's been tested, pressure tested by one, two, three or four people and you walk away with a better product.",
+      "start": 885.0,
+      "end": 990.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "And we also tend to follow the founders. So when the founders come up with an idea or a suggestion, they want to go with it. This is just human nature. You know, we're all sort of tribal. Yes, sir. And then we go ahead and follow. And sometimes taking a pause to say, I don't necessarily agree with that. And then challenging, because I'm sure that they both want to be challenged. They don't want ideas that are baked in their minds that may not make sense contextually.",
+      "start": 990.0,
+      "end": 1034.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "The difference between a cult and a culture is like cult cares about being correct on the inside. We think truth is kind of the market. Right the product and a buyer are going to tell us that we were right. We want the company to be right. It doesn't matter damn whether Francisco and I are right. The Sailplane system has to end up producing credit. It's super uncomfortable until you exercise that. We need to relax.",
+      "start": 1034.5,
+      "end": 1073.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "Concretely does a 15 minute period sound right? I mean, like, is this something we're going to do? I'll just offer a challenging question. There's a lot in the document. Can we imagine daily stand up shifting to like there's going to be one to two 15 minute design reviews to enable the throughput of the system we imagine?",
+      "start": 1073.5,
+      "end": 1103.0
+    },
+    {
+      "speaker": "TJ",
+      "text": "I personally struggle with this. I personally struggle with any gate. Right. The work gate. Items are negative devices too, because pursuing like a rigid rule that gets inserted into a system. And rigid rules tend to make a lot of sense in the short term, but then they pay for them in the future. Right? I mean, standups is a great example of that. When we learned that we were misaligned as a team. We're not gelling. So a stand up made sense. We made that rule to actually set up a stand up. Is a stand up like the right vehicle for us today? TBD. Probably it is, but not in the current form. It's usually expensive to actually adjust those rules. We as humans, our social animals and we tend to prefer harmony and consensus and status quo. So that's why there's strong momentum towards this conservatism that we created.",
+      "start": 1103.0,
+      "end": 1179.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "I think gates test as well. And it's always like, should we test everything? Well, these are expensive to run, right? So therefore, maybe you need to be more pragmatic about it and define only the failure modes that your software is going to have. I personally believe that the most important thing for us to acquire is culturally, not copy. A deep sense of the ownership of the work we are doing. Where if you have embraced key results. You fully need to understand it. And second, you need to be able to pitch it to other people because you understand how important that is to the business. And then you should use company resources to be able to accomplish that objective. And if you don't feel like you're an expert currently in user experience, it's your responsibility to actually secure that information from people who are like Yumi.",
+      "start": 1179.5,
+      "end": 1254.5
+    },
+    {
+      "speaker": "TJ",
+      "text": "I hesitate to work for a company that is like babysitting me. Right? That is like giving me the processes. Instead, I have to do my job and the company is giving me options. That may or may not take, depending on the situation that I'm currently experiencing. Now. That only works if two things happen. You need skin in the game. There's a magical thing that happens when you have skin in the game. When your outcomes depend on your own decisions. And also you have to build this relentlessness attribute towards solving that specific problem. Where if one thing doesn't work, you're going to go and try the other one. So the structural elements that we need to encourage, the ceremonies themselves, got to be there.",
+      "start": 1254.5,
+      "end": 1318.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I think for that you go to the red cord part of the document. That's great with your talk. Do you want to scroll down and talk about that?",
+      "start": 1318.5,
+      "end": 1333.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "The red cord. Is that a reference to an andon cord? That's the key thing. We in my last employer, that was a frequent thing to pull an andon cord. But it was an announcement. It was a big deal. But everybody was empowered to do it.",
+      "start": 1333.0,
+      "end": 1356.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "So the andon cord, everybody, like, we sit in meetings. And someone would pull an andon cord and everything would stop. But everyone felt empowered to do it. So it wasn't that you felt like the odd man out when you did it, and you weren't judged.",
+      "start": 1356.5,
+      "end": 1380.0
+    },
+    {
+      "speaker": "TJ",
+      "text": "I guess also the tooling, the record, the cost is not significant. So if you want to compare, we can quickly go back or roll back very quickly. Keeping the cost low.",
+      "start": 1380.0,
+      "end": 1396.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "This is part of the Accelerate handbook concept. Right. With small batch sizes and a fluid CI CD system where everything's checkpointed and can be rolled back to with low cost. Your feeling should be that you have the system of speed that creates safety. You could try something. You could roll it back. You can critique something that you just saw. Like, I didn't do this, but Francisco rolled out a new UI overhaul. I could have looked at it and said, I really don't like the racks page. And I should not feel like, oh, Francisco put all this time into the racks page. I'm going to not say anything and it'll make him feel bad. Like all that stuff is going to kill us. It's really got to be about us collectively being smart together. Not smart individually.",
+      "start": 1396.0,
+      "end": 1466.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "And I really want to see us all pull the red cord. Right? Because we are making mistakes left and right. Me, right. I need Paul and Vish to pull the red cord on me. On things that I think and then I articulate about how we're doing the Dell deal or whatever. If we're not surfacing those concerns, one of two things is true. Either we're acting breathlessly and we're not even reflecting that this is maybe not a good idea. Or we have done the reflection. But we aren't up to the challenge of pulling the red cord. It could be either one.",
+      "start": 1466.5,
+      "end": 1519.0
+    },
+    {
+      "speaker": "Vish",
+      "text": "You and I pulled a red cord two weeks ago on the extension of the production license. We got sucked into Dell's legal process, and they were renegotiating the extension with IP rights, and then all of a sudden we were like, well, if they want that, then we want this. And then it started to go down into the lawyer rabbit hole, where the business was affected by it. And I think Sam and I looked at each other like, this is not the way to go. So Sam called up Tal and basically said, we're not negotiating on the side. We're going back to the original, very simple license. And that could have blown up the entire deal, but we had to pull it because it was going to tank the larger deal. So that was a good use case.",
+      "start": 1519.0,
+      "end": 1590.0
+    },
+    {
+      "speaker": "Sam",
+      "text": "I'm trying to find ways that we can do this in like 30 minute shots so that it feels like it's additive. But I also realize 30 minutes is not a long time to have these conversations. We have 30 minutes until Brad heads out.",
+      "start": 1590.0,
+      "end": 1612.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "For what it's worth, Vish, I think my next topic that we have a discussion on, I think I am DRI for helping define that. And I want to talk to you and Yumi. Like as a three person group before we present stuff to the whole team.",
+      "start": 1612.5,
+      "end": 1636.5
+    },
+    {
+      "speaker": "Vish",
+      "text": "That's good. Awesome.",
+      "start": 1636.5,
+      "end": 1646.5
+    },
+    {
+      "speaker": "Sam",
+      "text": "I'll try to make tomorrow's schedule a little bit more clear in advance.",
+      "start": 1646.5,
+      "end": 1656.5
+    }
+  ]
+}

@@ -1,0 +1,148 @@
+{
+  "overall_agreement": 0.8,
+  "passed": true,
+  "threshold": 0.75,
+  "transcript_count": 5,
+  "results": [
+    {
+      "session_id": "001_design_practices_mar10",
+      "human_judgment": "converging",
+      "human_notes": "Meeting converges through productive tension. Vish's eight-pattern framework is adopted as shared vocabulary by multiple participants. Sam personalizes the framework through self-disclosure (branding feature failure). TJ offers substantive pushback on gates but engages using the same conceptual vocabulary, and the group resolves the tension through the red cord / andon cord metaphor which reframes imposed process as individual empowerment. Meeting ends with clear role assignments and next steps. | Caveats: TJ's gate-vs-ownership tension is deferred rather than resolved \u2014 convergence is directional, not complete; 30-minute time constraint compressed discussion \u2014 some topics were cut short by scheduling; Yumi's 'one simple problem' question remains open \u2014 foundational alignment question unanswered in this session",
+      "combined_score": 0.582,
+      "signal_results": [
+        {
+          "signal": "vocabulary_adoption",
+          "predicted_converging": true,
+          "score": 0.233,
+          "agrees_with_human": true
+        },
+        {
+          "signal": "question_type_arc",
+          "predicted_converging": true,
+          "score": 0.5,
+          "agrees_with_human": true
+        },
+        {
+          "signal": "agreement_markers",
+          "predicted_converging": true,
+          "score": 1.0,
+          "agrees_with_human": true
+        }
+      ],
+      "agreement_rate": 1.0,
+      "all_signals_agree": true
+    },
+    {
+      "session_id": "002_onsite_strategy_mar10",
+      "human_judgment": "converging",
+      "human_notes": "This is a high-convergence meeting driven primarily by Sam and Francisco co-presenting the company's strategic vision and engineering philosophy to the full team for the first time. The key convergence dynamic is information asymmetry being resolved: TJ raises a direct runway concern, Sam addresses it with concrete deal ladder details, and TJ explicitly signals resolution ('I appreciate the clarification, so at least I now see a ladder'). Yumi asks about product scope, triggering an extended strategic disclosure that multiple participants build on. Francisco's agent-first manifesto presentation generates engagement rather than resistance. The meeting converges on shared understanding of strategy, commercial path, and engineering philosophy, even though the manifesto's operational implications remain aspirational. | Caveats: This is primarily a founder-led information session, not a negotiation or decision meeting. Convergence is easier when the structure is presentational rather than deliberative.; The manifesto is presented as aspirational. Agreement with the aspiration does not mean agreement with the operational implications, which are deferred.; Yumi's design concern ('designing experience sometimes takes time') is validated but not resolved. This is a latent divergence point that will resurface.; The Sam-Francisco co-narration is very high LSM but may reflect co-founder alignment rather than team-wide convergence. The rest of the team is mostly receiving, not co-constructing.; TJ's runway question was the only genuine stress test. Its clean resolution inflates the overall convergence score. A meeting with more distributed pushback might score lower.",
+      "combined_score": 0.75,
+      "signal_results": [
+        {
+          "signal": "vocabulary_adoption",
+          "predicted_converging": true,
+          "score": 0.6,
+          "agrees_with_human": true
+        },
+        {
+          "signal": "question_type_arc",
+          "predicted_converging": true,
+          "score": 0.643,
+          "agrees_with_human": true
+        },
+        {
+          "signal": "agreement_markers",
+          "predicted_converging": true,
+          "score": 1.0,
+          "agrees_with_human": true
+        }
+      ],
+      "agreement_rate": 1.0,
+      "all_signals_agree": true
+    },
+    {
+      "session_id": "003_subagent_retro_mar06",
+      "human_judgment": "not_converging",
+      "human_notes": "This meeting is a post-mortem on a failed feature (annotation/Mini ACE sub-agent). It reveals that the team was NOT converging during the feature's development and the retro itself only partially converges on what went wrong. Sam drives the forensic walkthrough almost entirely alone, asking structured questions. The team provides honest answers, but the responses expose fragmentation, siloed communication, suppressed concerns, and absence of shared design understanding. The meeting does not reach convergence on remediation \u2014 Sam explicitly defers solutions ('we're not going to do that today') and instead closes with an aspirational statement that Yumi will fix the design gap. The team aligns on the factual record of failure but does not converge on a shared plan for what to change. | Caveats: A retrospective is structurally designed to examine failure, so a 'not_converging' judgment partly reflects the meeting's genre rather than pure group dynamics. However, retros CAN converge \u2014 on shared understanding of root causes and on remediation commitments. This one converges weakly on facts but not on remediation.; Sam's facilitator role creates asymmetric power dynamics. His monologues (cavitation, unbounded work intake) are received in silence, which could indicate either absorption or disengagement. Without prosodic cues, text analysis alone cannot distinguish these.; The meeting is a precursor to the March 10 onsite sessions (Transcripts 001 and 002). Many of the concepts Sam introduces here (red cord, design gate, batch size) are picked up and contested productively four days later. So the non-convergence in this meeting may have been necessary for the convergence that follows.; TJ and Vladi's admissions of suppressed concern are high-trust disclosures. In a healthier reading, this IS convergence \u2014 the team is being honest about what went wrong. The 'not_converging' judgment reflects that this honesty does not lead to shared remediation in this session, not that the honesty itself is bad.",
+      "combined_score": 0.522,
+      "signal_results": [
+        {
+          "signal": "vocabulary_adoption",
+          "predicted_converging": false,
+          "score": 0.4,
+          "agrees_with_human": true
+        },
+        {
+          "signal": "question_type_arc",
+          "predicted_converging": false,
+          "score": 0.15,
+          "agrees_with_human": true
+        },
+        {
+          "signal": "agreement_markers",
+          "predicted_converging": true,
+          "score": 1.0,
+          "agrees_with_human": false
+        }
+      ],
+      "agreement_rate": 0.667,
+      "all_signals_agree": false
+    },
+    {
+      "session_id": "004_kpi_dashboard_feb27",
+      "human_judgment": "converging",
+      "human_notes": "This is a high-convergence three-person working session (Sam, Vish, Paul) covering KPI strategy, first pass yield attribution, Microsoft debrief, security staging, and Franklin planning. The meeting converges strongly because the three participants operate with shared mental models, finish each other's reasoning, productively challenge each other's claims (Vish on FPY attribution, Sam acknowledging the senior tech confound), and close every thread with clear action items. The LSM is naturally high in a small group of trusted peers with deep shared context. Every topic opened is closed with alignment. | Caveats: This is a three-person inner-circle working session (Sam, Vish, Paul). Convergence is structurally easier with high-trust, high-context peers than in full-team meetings. The convergence score reflects the meeting as it is, but should not be compared directly to full-team sessions.; The meeting covers many topics (KPIs, FPY, Microsoft, security, Franklin, scheduling) with shallow depth on each. Convergence is broad but not deep \u2014 each topic gets aligned on direction but not fully resolved.; Sam's calendar/exhaustion disclosure is a vulnerability signal that functions as trust-building in this context. In a different group dynamic it could signal fragility.; Paul's extended Microsoft debrief includes colorful analogies (hot girl, Epstein) that are high-trust in-group humor. These would not work in a larger or more formal setting.",
+      "combined_score": 0.559,
+      "signal_results": [
+        {
+          "signal": "vocabulary_adoption",
+          "predicted_converging": true,
+          "score": 0.515,
+          "agrees_with_human": true
+        },
+        {
+          "signal": "question_type_arc",
+          "predicted_converging": false,
+          "score": 0.15,
+          "agrees_with_human": false
+        },
+        {
+          "signal": "agreement_markers",
+          "predicted_converging": true,
+          "score": 1.0,
+          "agrees_with_human": true
+        }
+      ],
+      "agreement_rate": 0.667,
+      "all_signals_agree": false
+    },
+    {
+      "session_id": "005_practices_okr_mar09",
+      "human_judgment": "converging",
+      "human_notes": "This is a Monday planning ceremony with two halves: a practice improvement catalog (converging moderately) and a KR review (converging weakly). The first half generates genuine distributed contributions \u2014 Francisco, Will, Michael, Yongmin, Yumi, and Vish all volunteer practice improvement items. Sam catalogs them and the team builds a shared agenda for the onsite week. The second half is a KR walkthrough that surfaces productive refinement (Francisco pushing for falsifiable KRs, Sam reinforcing quantitative standards) but runs out of time before achieving deep alignment. The meeting converges on WHAT to work on this week but not deeply on HOW, which is explicitly deferred to the onsite. Convergence is real but shallow. | Caveats: This meeting sits between the failed-feature retro (Transcript 003, Mar 6) and the onsite sessions (Transcripts 001/002, Mar 10). It functions as a bridge: collecting improvement intentions from the retro and staging them for the onsite. Convergence is directional (everyone agrees we need to improve practices) but not specific (the how is deferred).; The KR review portion is rushed. Multiple KRs get 30-second treatment. The Francisco-Sam exchange on falsifiable KRs is the only deep engagement. Other KR owners mostly report status without generating alignment discussion.; Sam is the primary organizer, cataloger, and synthesizer. The meeting's convergence depends heavily on his facilitation. If Sam were absent, it is unclear whether the team would self-organize to the same outcome.; The 0.75 confidence reflects that this is converging but weakly. The practice catalog is a genuine distributed contribution (strong signal). The KR review is mostly procedural (weak signal). The meeting achieves alignment on priorities but not on execution specifics.; Vish's Series A KR suggestion being rejected is a minor divergence. In a healthy team, rejected bids are fine as long as they are handled respectfully, which this one is. But it does mean the meeting's convergence is partially convergence-by-exclusion rather than convergence-by-integration.",
+      "combined_score": 0.618,
+      "signal_results": [
+        {
+          "signal": "vocabulary_adoption",
+          "predicted_converging": true,
+          "score": 0.692,
+          "agrees_with_human": true
+        },
+        {
+          "signal": "question_type_arc",
+          "predicted_converging": false,
+          "score": 0.15,
+          "agrees_with_human": false
+        },
+        {
+          "signal": "agreement_markers",
+          "predicted_converging": true,
+          "score": 1.0,
+          "agrees_with_human": true
+        }
+      ],
+      "agreement_rate": 0.667,
+      "all_signals_agree": false
+    }
+  ]
+}

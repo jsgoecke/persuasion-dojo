@@ -1,0 +1,45 @@
+# Environment & secrets
+.env
+.env.*
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Node / Electron
+node_modules/
+frontend/overlay/out/
+frontend/overlay/dist/
+frontend/overlay/.vite/
+
+# Swift build artifacts
+swift/AudioCapture/.build/
+swift/AudioCapture/DerivedData/
+*.xcuserstate
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# gstack / Claude Code
+.gstack/
+.settings.json
+
+# Misc
+*.log
+*.tmp
+data/
+resources/google_client_secret*.json

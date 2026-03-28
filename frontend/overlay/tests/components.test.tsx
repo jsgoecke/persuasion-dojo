@@ -235,7 +235,8 @@ describe("Overlay", () => {
       ]),
     });
     render(<Overlay />);
-    expect(await screen.findByText("Q3 Board prep")).toBeInTheDocument();
+    // Fetch is wrapped in setTimeout(fn, 0) — allow up to 3s on slow CI runners
+    expect(await screen.findByText("Q3 Board prep", {}, { timeout: 3000 })).toBeInTheDocument();
     expect(screen.getByText("Spar vs Inquisitor")).toBeInTheDocument();
   });
 

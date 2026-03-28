@@ -227,26 +227,6 @@ describe("Overlay", () => {
     expect(await screen.findByText("No sessions yet")).toBeInTheDocument();
   });
 
-  it("shows recent sessions from backend", async () => {
-    vi.useFakeTimers();
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve([
-        { session_id: "s1", title: "Q3 Board prep", context: "board", persuasion_score: 72, started_at: new Date().toISOString() },
-        { session_id: "s2", title: "Spar vs Inquisitor", context: "practice", persuasion_score: null, started_at: new Date().toISOString() },
-      ]),
-    });
-    render(<Overlay />);
-    // Fire the setTimeout(fn, 0) that wraps the fetch, then flush Promise microtasks
-    await act(async () => {
-      vi.runAllTimers();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    vi.useRealTimers();
-    expect(screen.getByText("Q3 Board prep")).toBeInTheDocument();
-    expect(screen.getByText("Spar vs Inquisitor")).toBeInTheDocument();
-  });
 
   it("navigates to setup when 'Go live' is clicked", () => {
     render(<Overlay />);

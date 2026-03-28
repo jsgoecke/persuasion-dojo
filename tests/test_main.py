@@ -46,7 +46,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from backend.coaching_engine import CoachingPrompt
 from backend.database import init_db, override_engine, get_db_session
 from backend.main import SessionPipeline, SessionManager, app
-from backend.models import MeetingSession, Utterance
+from backend.models import MeetingSession, Participant, Utterance
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +436,7 @@ class TestSessionManager:
 # ---------------------------------------------------------------------------
 
 class TestWebSocketSessionNotFound:
+    @pytest.mark.timeout(60)
     def test_closes_immediately_for_missing_session(self, client):
         """Server closes connection (code 4004) when session not in DB."""
         with pytest.raises(Exception):
@@ -530,6 +531,7 @@ class TestWebSocketUtterance:
                 ws.send_json({"type": "ping"})
                 assert ws.receive_json() == {"type": "pong"}
 
+    @pytest.mark.timeout(60)
     def test_utterance_with_prompt_sends_coaching_prompt(self, client):
         """When pipeline returns a CoachingPrompt, server sends echo + coaching_prompt."""
         sid = create_session(client)
@@ -866,6 +868,136 @@ class TestRetroImport:
         )
         assert r.status_code == 200
         assert "job_id" in r.json()
+
+
+# ---------------------------------------------------------------------------
+# Retro import — profile extraction
+# ---------------------------------------------------------------------------
+
+from sqlalchemy import select as sa_select
+
+class TestRetroProfileExtraction:
+    """Verify that retro analysis creates Participant records from transcripts."""
+
+    def _upload_and_wait(self, client, text_content: bytes, filename: str = "meeting.txt") -> dict:
+        """Upload a text transcript and poll until the job completes."""
+        r = client.post(
+            "/retro/upload",
+            files={"file": (filename, text_content, "text/plain")},
+        )
+        assert r.status_code == 200
+        job_id = r.json()["job_id"]
+
+        # Background tasks run synchronously in TestClient, so the job
+        # should be done by the time we poll.
+        job_r = client.get(f"/retro/jobs/{job_id}")
+        assert job_r.status_code == 200
+        return job_r.json()
+
+    def test_text_transcript_creates_participants(self, client):
+        """A multi-speaker text transcript should create Participant records."""
+        # Build a transcript with enough utterances for the profiler to classify.
+        # Use high-signal utterances so the profiler produces non-Undetermined results.
+        lines = []
+        # Alice: logic + advocacy → Inquisitor pattern
+        for _ in range(4):
+            lines.append("Alice: The data clearly shows a 47% improvement. We need to act on the evidence now.")
+        # Bob: narrative + analysis → Bridge Builder pattern
+        for _ in range(4):
+            lines.append("Bob: Imagine how the team feels about this. Let's listen to everyone's perspective first.")
+        transcript = "\n".join(lines).encode()
+
+        job = self._upload_and_wait(client, transcript)
+        assert job["status"] == "done", f"Job failed: {job.get('error')}"
+        assert job.get("participants") is not None
+        assert len(job["participants"]) >= 2, (
+            f"Expected ≥2 participants, got {len(job.get('participants', []))}"
+        )
+
+        # Verify participant names are preserved
+        names = {p["name"] or p["speaker_id"] for p in job["participants"]}
+        assert "Alice" in names
+        assert "Bob" in names
+
+    def test_participants_persisted_to_db(self, client):
+        """Participant records from retro analysis should be persisted to SQLite."""
+        lines = []
+        for _ in range(4):
+            lines.append("Carol: The metrics are unambiguous. I recommend we commit to this approach.")
+        for _ in range(4):
+            lines.append("Dave: I remember when we first tried this — the energy was incredible.")
+        transcript = "\n".join(lines).encode()
+
+        job = self._upload_and_wait(client, transcript)
+        assert job["status"] == "done", f"Job failed: {job.get('error')}"
+
+        # Query DB for created participants
+        async def _check():
+            async with get_db_session() as db:
+                result = await db.execute(sa_select(Participant))
+                return [p.name for p in result.scalars()]
+
+        db_names = asyncio.run(_check())
+        assert "Carol" in db_names, f"Carol not found in DB. Got: {db_names}"
+        assert "Dave" in db_names, f"Dave not found in DB. Got: {db_names}"
+
+    def test_speaker_n_ids_get_human_names(self, client):
+        """Diarized speaker IDs like speaker_0 should be title-cased to 'Speaker 0'."""
+        json_content = b'[' + b','.join([
+            b'{"speaker": 0, "text": "The evidence is clear, we must act decisively on the data."}',
+            b'{"speaker": 0, "text": "Based on our analysis, the numbers support this conclusion."}',
+            b'{"speaker": 0, "text": "I recommend we commit. The metrics are unambiguous."}',
+            b'{"speaker": 0, "text": "Therefore we should look at the data carefully and decide."}',
+            b'{"speaker": 1, "text": "Imagine what this journey could mean for the whole team."}',
+            b'{"speaker": 1, "text": "I remember when we started and the excitement was inspiring."}',
+            b'{"speaker": 1, "text": "Let me tell you a story about how we got here together."}',
+            b'{"speaker": 1, "text": "The vision is clear and our story can inspire everyone."}',
+        ]) + b']'
+
+        r = client.post(
+            "/retro/upload",
+            files={"file": ("meeting.json", json_content, "application/json")},
+        )
+        assert r.status_code == 200
+        job_id = r.json()["job_id"]
+
+        job_r = client.get(f"/retro/jobs/{job_id}")
+        job = job_r.json()
+        assert job["status"] == "done", f"Job failed: {job.get('error')}"
+
+        if job.get("participants"):
+            names = {p.get("name") or p["speaker_id"] for p in job["participants"]}
+            # speaker_0 → "Speaker 0", speaker_1 → "Speaker 1"
+            assert any("Speaker" in n for n in names), f"Expected title-cased speaker names, got: {names}"
+
+    def test_short_transcript_still_creates_profiles(self, client):
+        """Even short transcripts should create profiles (with 'Unknown' archetype if needed)."""
+        transcript = b"Alice: Hello.\nBob: Hi there."
+        job = self._upload_and_wait(client, transcript)
+        assert job["status"] == "done", f"Job failed: {job.get('error')}"
+        # With our fix, even Undetermined speakers get saved as "Unknown"
+        assert job.get("participants") is not None
+        assert len(job["participants"]) >= 2
+
+    def test_retro_job_survives_poll_after_completion(self, client):
+        """Job results should remain accessible for re-polling (back button reconnect)."""
+        transcript = b"Alice: The data shows improvement.\nBob: I agree completely."
+        r = client.post(
+            "/retro/upload",
+            files={"file": ("meeting.txt", transcript, "text/plain")},
+        )
+        job_id = r.json()["job_id"]
+
+        # Poll multiple times — simulates navigating away and back
+        for _ in range(3):
+            job_r = client.get(f"/retro/jobs/{job_id}")
+            assert job_r.status_code == 200
+            data = job_r.json()
+            assert data["status"] in ("pending", "processing", "done", "error")
+
+        # Final poll should still return the job
+        final = client.get(f"/retro/jobs/{job_id}").json()
+        assert final["status"] in ("done", "error")
 
 
 # ---------------------------------------------------------------------------

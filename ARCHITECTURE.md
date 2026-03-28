@@ -272,6 +272,86 @@ CoachingPrompt
 
 ---
 
+## ACE Loop — Agentic Context Engineering
+
+The coaching engine gets smarter over time through a closed adaptive loop built on three roles: **Reflector → Curator → Selector**. This is the ACE (Agentic Context Engineering) pipeline.
+
+```
+Session ends
+     │
+     ▼
+┌─────────────┐     JSON delta entries      ┌─────────────┐
+│  Reflector  │ ──────────────────────────► │   Curator   │
+│  (Opus)     │   "what worked / didn't"    │  (Python)   │
+└─────────────┘                             └──────┬──────┘
+                                                   │ merge
+                                                   ▼
+                                          ┌─────────────────┐
+                                          │   Bullet Store  │
+                                          │   (SQLite)      │
+                                          │  CoachingBullet │
+                                          └──────┬──────────┘
+                                                 │ top-N bullets
+                                                 ▼
+                                          ┌─────────────┐
+                                          │  Selector   │
+                                          │  (Python,   │
+                                          │  <10ms)     │
+                                          └──────┬──────┘
+                                                 │ injected into prompt context
+                                                 ▼
+                                          ┌─────────────┐
+                                          │ Haiku call  │
+                                          │ (real-time) │
+                                          └─────────────┘
+                                                 │
+                                          prompt effectiveness score
+                                                 │
+                                                 ▼
+                                        helpful/harmful counters
+                                        updated on bullet rows
+```
+
+### The three roles
+
+**Reflector (Claude Opus — runs post-session, background)**
+Reads the full session transcript, the prompts that were generated, and any effectiveness signals (did the conversation shift after the prompt?). Extracts up to 8 structured JSON delta entries per session — discrete lessons like:
+- "When this user faces an Inquisitor in a board context, leading with a statistic before the narrative works better than the reverse"
+- "Ego-threat prompts are less effective for this user when they are already in advocate mode"
+
+**Curator (deterministic Python — no LLM)**
+Merges delta entries into the bullet store without an LLM call. Deduplicates using a content hash (stop-word-stripped token set). Retires bullets where `harmful_count >= helpful_count + 2`. Caps the active store at 100 bullets. Fast, deterministic, crash-safe.
+
+**Selector (Python relevance scoring — <10ms)**
+Before each Haiku call, scores every active bullet for relevance to the current moment using weighted signals:
+
+| Signal | Weight |
+|--------|--------|
+| Net helpful score (helpful − harmful) | 0.5 |
+| Evidence count (sessions it's been validated on) | 0.3 |
+| Archetype match (user type + counterpart type) | 3.0 |
+| ELM state match | 2.5 |
+| Meeting context match (board / team / 1:1) | 1.5 |
+| Archetype mismatch penalty | −0.5 |
+| ELM state mismatch penalty | −0.3 |
+
+Top 15 bullets (≤500 words) are injected into the Haiku system prompt as a coaching playbook. Haiku sees only what's relevant to the current moment — no stale or contradictory advice.
+
+### Why this architecture
+
+A naive approach would store a growing markdown playbook and pass the whole thing to Claude every call. This breaks in three ways:
+1. **Cost** — growing context window means growing token cost per prompt
+2. **Noise** — stale or contradictory lessons degrade prompt quality
+3. **Latency** — large context = slower Haiku calls, risks breaching the 1.5s timeout
+
+The ACE loop keeps context small, fresh, and ranked by proven effectiveness. The Selector runs in <10ms so it adds zero perceptible latency to the real-time coaching path.
+
+### Feedback loop
+
+Each generated prompt is scored for effectiveness after the session (did the conversation converge? did the user's behaviour change?). Effectiveness scores update `helpful_count` / `harmful_count` on the bullet rows directly. Bullets that consistently fail get retired automatically by the Curator on the next session. This creates a self-improving system that personalises to each user over time without any manual curation.
+
+---
+
 ## Key design decisions
 
 **Why ScreenCaptureKit over BlackHole?**

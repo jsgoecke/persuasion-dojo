@@ -113,13 +113,15 @@ class TestPipeCleanup:
         mode = os.stat(pipe_path).st_mode
         assert stat.S_ISFIFO(mode), "Expected FIFO, got something else"
 
-    def test_ensure_pipe_no_op_if_exists(self, reader, pipe_path):
-        """_ensure_pipe() doesn't fail or recreate if pipe already exists."""
+    def test_ensure_pipe_replaces_stale_pipe(self, reader, pipe_path):
+        """_ensure_pipe() removes and recreates an existing pipe (crash recovery)."""
         os.mkfifo(pipe_path)
         inode_before = os.stat(pipe_path).st_ino
         reader._ensure_pipe()
+        assert os.path.exists(pipe_path)
         inode_after = os.stat(pipe_path).st_ino
-        assert inode_before == inode_after, "Pipe was recreated unnecessarily"
+        assert inode_before != inode_after, "Pipe should be recreated to clear stale state"
+        assert stat.S_ISFIFO(os.stat(pipe_path).st_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -418,11 +420,13 @@ class TestLifespanShutdown:
     async def test_lifespan_does_not_delete_pipe(self):
         """
         Pipe cleanup is owned by AudioPipeReader.stop(), not the lifespan
-        shutdown handler. Lifespan should only cancel background tasks.
+        shutdown handler. If someone re-adds pipe deletion, this test catches it.
         """
-        # This is a design invariant test — pipe deletion was removed from
-        # lifespan to prevent the triple-deletion race condition.
-        pass
+        import inspect
+        from backend.main import lifespan
+        source = inspect.getsource(lifespan)
+        assert "unlink" not in source, \
+            "Lifespan should not call unlink — pipe cleanup is owned by AudioPipeReader"
 
     @pytest.mark.asyncio
     async def test_background_tasks_cancelled_on_shutdown(self):

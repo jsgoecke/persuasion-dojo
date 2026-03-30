@@ -68,19 +68,22 @@ function notifyRenderer(channel: string, ...args: unknown[]): void {
 function killOrphanedCaptures(): void {
   // Kill any AudioCapture processes left over from a previous session.
   // This prevents two writers on the same FIFO which corrupts the audio stream.
-  // Uses pgrep to find PIDs, then kills each individually. This avoids the race
-  // where a blanket `pkill -f AudioCapture` could kill a newly spawned process.
+  // Uses pgrep with the full binary path to avoid matching unrelated processes
+  // (e.g., `vim AudioCapture.swift` or `grep AudioCapture`).
   try {
     const pids = require("child_process")
-      .execSync("pgrep -f AudioCapture", { encoding: "utf-8" })
+      .execSync(`pgrep -f "${CAPTURE_BINARY}"`, { encoding: "utf-8" })
       .trim()
       .split("\n")
       .filter((p: string) => p.length > 0);
     for (const pid of pids) {
+      const numPid = Number(pid);
+      // Guard: PID must be positive (PID 0 = entire process group = catastrophic)
+      if (numPid <= 0) continue;
       // Skip our own captureProcess if it somehow survived — we'll manage it directly
-      if (captureProcess && String(captureProcess.pid) === pid) continue;
+      if (captureProcess && captureProcess.pid === numPid) continue;
       try {
-        process.kill(Number(pid), "SIGKILL");
+        process.kill(numPid, "SIGKILL");
         process.stderr.write(`[AudioCapture] killed orphan PID ${pid}\n`);
       } catch {
         // Already exited

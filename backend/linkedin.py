@@ -122,9 +122,18 @@ async def fetch_linkedin_profile(url: str) -> str:
     if not _LINKEDIN_URL_RE.match(url):
         raise ValueError(f"Not a LinkedIn profile URL: {url}")
 
-    async with httpx.AsyncClient(follow_redirects=False, timeout=10.0) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
         resp = await client.get(url, headers=_HEADERS)
         resp.raise_for_status()
+
+    # LinkedIn redirects browser UAs to auth walls for private/restricted profiles.
+    final_url = str(resp.url)
+    if "/authwall" in final_url or "/login" in final_url:
+        raise ValueError("LinkedIn requires authentication for this profile")
+
+    # Guard against SSRF: after redirects, final URL must still be linkedin.com.
+    if not _LINKEDIN_URL_RE.match(final_url.split("?")[0]):
+        raise ValueError("Redirect led outside LinkedIn — request blocked")
 
     data = _extract_from_html(resp.text)
 

@@ -193,13 +193,21 @@ class AudioPipeReader:
     # ------------------------------------------------------------------
 
     def _ensure_pipe(self) -> None:
-        """Create the named pipe if it doesn't already exist."""
-        if not os.path.exists(self._pipe_path):
+        """Create the named pipe, replacing any stale one from a previous crash."""
+        if os.path.exists(self._pipe_path):
+            # Remove stale pipe so we get a fresh FIFO. A leftover pipe from a
+            # hard crash (SIGKILL, OOM) has no writer — the reader would block
+            # forever on open() if we reused it.
             try:
-                os.mkfifo(self._pipe_path)
-                logger.info("AudioPipeReader: created FIFO at %s", self._pipe_path)
-            except OSError as exc:
-                logger.warning("AudioPipeReader: could not create FIFO — %s", exc)
+                os.unlink(self._pipe_path)
+                logger.info("AudioPipeReader: removed stale pipe %s", self._pipe_path)
+            except OSError:
+                pass
+        try:
+            os.mkfifo(self._pipe_path)
+            logger.info("AudioPipeReader: created FIFO at %s", self._pipe_path)
+        except OSError as exc:
+            logger.warning("AudioPipeReader: could not create FIFO — %s", exc)
 
     async def _read_loop(self) -> None:
         """

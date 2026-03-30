@@ -232,10 +232,10 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
 
     ws.onclose = () => {
       stopPing();
-      // Always stop capture on WS close as a safety net — if session_ended
-      // was never received (crash, network drop), prevent orphaned Swift processes.
-      window.api.stopCapture();
       if (phaseRef.current !== "ended") {
+        // session_ended was never received (crash, network drop) — stop capture
+        // as a safety net to prevent orphaned Swift processes.
+        window.api.stopCapture();
         // Reset phase so startSession() guard lets the user retry.
         updatePhase("idle");
         setConnectionState("error");

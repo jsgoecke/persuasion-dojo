@@ -1862,7 +1862,10 @@ async def _handle_session_end(
     )
 
     # Audio capture is stopped by the frontend when it receives session_ended.
-    # No separate stop_capture message needed — it raced with ws.close().
+    # Give the client a moment to process session_ended before the close frame
+    # arrives — without this, fast networks can deliver the close frame before
+    # the client reads session_ended, causing it to show an error instead of scores.
+    await asyncio.sleep(0.05)
     await ws.close()
 
     # ── Post-session background tasks (do not block WebSocket close) ──

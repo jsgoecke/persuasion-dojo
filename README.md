@@ -98,7 +98,7 @@ At session end, the system computes a **Persuasion Score (0–100)** and a **Gro
 
 - **Live coaching overlay** — always-on-top Electron window, private to you
 - **Participant profiling** — real-time Superpower classification, persists across meetings
-- **Pre-seeding** — paste a bio, email, or LinkedIn blurb before a meeting to pre-classify a participant
+- **Pre-seeding** — paste a bio, email, or LinkedIn URL before a meeting to pre-classify a participant (LinkedIn profiles are auto-fetched)
 - **Google Calendar integration** — polls upcoming meetings, pre-loads participant context
 - **Sparring mode** — practice against an AI opponent before a high-stakes call
 - **Retro import** — process a recorded audio file after the fact for coaching analysis

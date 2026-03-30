@@ -68,9 +68,9 @@ The Swift AudioCapture binary is managed by Electron's main process via IPC:
 ```
 Session start ("Go Live"):
   Renderer → swift:start IPC → Electron main → spawnCapture()
-  → kills orphans by PID (pgrep + process.kill, not pkill — avoids race)
+  → kills orphans by PID (pgrep on full binary path + process.kill, not pkill — avoids race)
   → spawns fresh Swift binary → creates /tmp/persuasion_audio.pipe
-  → Python AudioPipeReader.start() opens the FIFO
+  → Python AudioPipeReader.start() replaces any stale pipe and opens the FIFO
 
 Session end:
   Python _handle_session_end() → sends {"type": "session_ended"} over WS
@@ -78,7 +78,8 @@ Session end:
   → SIGTERM to Swift binary (PID-specific, not pkill)
   Python AudioPipeReader.stop() → removes the named pipe (single owner)
 
-  Also: ws.onclose handler calls stopCapture() as safety net for dropped connections.
+  Also: ws.onclose calls stopCapture() as safety net (only when session_ended wasn't received).
+  50ms delay before ws.close() ensures client processes session_ended before close frame.
 
 Server shutdown (lifespan):
   Cancels tracked background tasks (debrief, playbook updates)
@@ -272,7 +273,7 @@ Processes a recorded audio file (`.wav`, `.m4a`, `.mp3`) through Deepgram's REST
 ```
 
 **Audio lifecycle messages:**
-- `session_ended` — client stops AudioCapture on receipt (no separate stop_capture message — that design raced with ws.close()). Also triggers stopCapture on ws.onclose as a safety net.
+- `session_ended` — client stops AudioCapture on receipt (no separate stop_capture message — that design raced with ws.close()). `ws.onclose` also calls stopCapture as a safety net, but only when `session_ended` was never received (crash/disconnect).
 - `swift_restart_needed` — sent when the silence watchdog fires (no audio for 5s), tells Electron to restart the Swift binary
 - `audio_level` — RMS audio level (0.0–1.0), sent ~4×/sec for the sound level indicator
 - `no_audio` — warning when no audio arrives within the first 5 seconds, or Deepgram connection fails

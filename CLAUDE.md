@@ -51,7 +51,7 @@ persuasion-dojo/
 │   ├── test_scoring.py
 │   ├── test_coaching_engine.py
 │   ├── test_transcription.py
-│   ├── test_audio_lifecycle.py  # Audio pipeline lifecycle (44 tests)
+│   ├── test_audio_lifecycle.py  # Audio pipeline lifecycle (43 tests)
 │   ├── test_ace_convergence.py  # ACE loop convergence validation
 │   ├── test_linkedin.py         # LinkedIn scraper URL/HTML tests
 │   └── test_main.py             # FastAPI + WebSocket integration tests

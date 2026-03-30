@@ -68,12 +68,29 @@ function notifyRenderer(channel: string, ...args: unknown[]): void {
 function killOrphanedCaptures(): void {
   // Kill any AudioCapture processes left over from a previous session.
   // This prevents two writers on the same FIFO which corrupts the audio stream.
+  // Uses pgrep to find PIDs, then kills each individually. This avoids the race
+  // where a blanket `pkill -f AudioCapture` could kill a newly spawned process.
   try {
-    require("child_process").execSync("pkill -9 -f AudioCapture", { stdio: "ignore" });
-    process.stderr.write("[AudioCapture] killed orphaned processes\n");
+    const pids = require("child_process")
+      .execSync("pgrep -f AudioCapture", { encoding: "utf-8" })
+      .trim()
+      .split("\n")
+      .filter((p: string) => p.length > 0);
+    for (const pid of pids) {
+      // Skip our own captureProcess if it somehow survived — we'll manage it directly
+      if (captureProcess && String(captureProcess.pid) === pid) continue;
+      try {
+        process.kill(Number(pid), "SIGKILL");
+        process.stderr.write(`[AudioCapture] killed orphan PID ${pid}\n`);
+      } catch {
+        // Already exited
+      }
+    }
   } catch {
     // No orphans found — expected on clean start
   }
+  // Pipe cleanup is owned by AudioPipeReader (Python) — do not delete here.
+  // Deleting the pipe from Electron races with AudioPipeReader creating it.
 }
 
 function spawnCapture(): void {
@@ -384,6 +401,20 @@ app.whenReady().then(() => {
   ipcMain.on("swift:restart", () => {
     stopCapture();
     spawnCapture();
+  });
+
+  // IPC: New session starting — ensure the capture binary is running.
+  // The renderer sends this before opening the WebSocket so audio is flowing.
+  ipcMain.on("swift:start", () => {
+    process.stderr.write("[AudioCapture] session starting — ensuring capture is running\n");
+    spawnCapture();
+  });
+
+  // IPC: Session ended — stop the capture binary to prevent orphaned processes.
+  // The renderer forwards this after receiving a "stop_capture" WebSocket message.
+  ipcMain.on("swift:stop", () => {
+    process.stderr.write("[AudioCapture] session ended — stopping capture\n");
+    stopCapture();
   });
 
   app.on("activate", () => {

@@ -34,6 +34,7 @@ persuasion-dojo/
 │   ├── coaching_engine.py   # Claude Haiku prompt generation (3-layer: self/audience/group)
 │   ├── scoring.py           # Persuasion Score + Growth Score computation (pure functions)
 │   ├── pre_seeding.py       # Pre-meeting participant classification from free text
+│   ├── linkedin.py          # LinkedIn public profile scraper (OG meta + JSON-LD)
 │   ├── sparring.py          # AI sparring partner mode (text loop, no audio)
 │   ├── retro_import.py      # Retroactive audio file processing (Deepgram REST)
 │   ├── calendar_service.py  # Google Calendar OAuth + meeting polling
@@ -49,7 +50,11 @@ persuasion-dojo/
 │   ├── test_elm_detector.py
 │   ├── test_scoring.py
 │   ├── test_coaching_engine.py
-│   └── test_transcription.py
+│   ├── test_transcription.py
+│   ├── test_audio_lifecycle.py  # Audio pipeline lifecycle (44 tests)
+│   ├── test_ace_convergence.py  # ACE loop convergence validation
+│   ├── test_linkedin.py         # LinkedIn scraper URL/HTML tests
+│   └── test_main.py             # FastAPI + WebSocket integration tests
 ├── docs/
 │   └── designs/             # CEO plans and design docs
 ├── .env                     # API keys (never commit)
@@ -108,11 +113,16 @@ cd frontend/overlay && npx playwright test  # Electron E2E tests
 **Test structure:**
 ```
 tests/
+├── test_main.py              # FastAPI REST + WebSocket integration (90+ tests)
 ├── test_profiler.py          # Superpower classification, window logic, carry-forward
 ├── test_elm_detector.py      # Ego threat, shortcut mode, consensus protection
 ├── test_scoring.py           # Persuasion Score, Growth Score (pure functions)
 ├── test_coaching_engine.py   # Cadence floor, priority queue, fallback path
 ├── test_transcription.py     # Deepgram reconnect, is_final handling
+├── test_audio_lifecycle.py   # Audio pipeline lifecycle: multi-session, pipe cleanup,
+│                             #   silence watchdog, session-end signaling (44 tests)
+├── test_ace_convergence.py   # ACE loop convergence over simulated multi-session
+├── test_linkedin.py          # LinkedIn scraper: URL validation, HTML extraction
 ├── test_database.py          # Write, read, disk-full simulation
 ├── test_calendar_service.py  # Token refresh, participant matching
 ├── test_team_sync.py         # Export, import, malformed JSON validation
@@ -121,7 +131,7 @@ tests/
     └── pre_seeding.py        # Pre-seed classification from text/email/bio inputs
 ```
 
-No test files exist yet — greenfield.
+Run `pytest` for the full backend suite (900+ tests, ~90s).
 
 ## Target user
 

@@ -76,7 +76,7 @@ Deferred work captured from /plan-ceo-review (2026-03-25, SCOPE EXPANSION mode) 
 - **Windows support** — ScreenCaptureKit is macOS-only; Windows is V2 with different capture API
 - **App Store distribution** — Apple audio capture review process too slow for MVP
 - **Voice/audio playback in Persuasion Replay** — text/visual timeline in V1; audio scrubbing in V2
-- **LinkedIn integration for pre-seeding** — manual text in V1; auto-fetch in V2
+- ~~**LinkedIn integration for pre-seeding**~~ ✅ COMPLETE — auto-fetch from public LinkedIn profiles via `backend/linkedin.py` + ProfilesPane URL input
 - **SOC 2 / enterprise security review** — V2, before enterprise sales
 - **Zoom cloud recording import for retroactive analysis** — V2, requires Zoom OAuth
 - **Otter transcript import for retroactive analysis** — V2, third-party dependency + copyright risk

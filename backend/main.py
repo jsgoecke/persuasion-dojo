@@ -366,11 +366,21 @@ class WatchResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialise the database on startup."""
+    """Initialise the database on startup; clean up resources on shutdown."""
     await init_db()
     async with get_db_session() as db:
         await _get_or_create_user(db)
+    _background_tasks: set[asyncio.Task] = set()
+    app.state.background_tasks = _background_tasks
     yield
+    # ── Shutdown cleanup ──
+    # Pipe cleanup is owned by AudioPipeReader.stop() — do not duplicate here.
+    # Cancel tracked background tasks (debrief, playbook updates)
+    # Copy the set to avoid RuntimeError if done callbacks fire during iteration.
+    for task in list(_background_tasks):
+        if not task.done():
+            task.cancel()
+    _background_tasks.clear()
 
 
 app = FastAPI(
@@ -666,7 +676,8 @@ class CreateSparringRequest(BaseModel):
 
 
 class PreSeedRequest(BaseModel):
-    text: str = Field(description="Free text: description, email, bio, or meeting notes")
+    text: str = Field(default="", description="Free text: description, email, bio, or meeting notes")
+    url: str | None = Field(default=None, description="LinkedIn profile URL — fetches and classifies automatically")
     name: str | None = Field(default=None, description="Participant name (for display only)")
 
 
@@ -1037,15 +1048,43 @@ async def assign_participant_name(
 @app.post("/participants/pre-seed", response_model=PreSeedResponse)
 async def pre_seed_participant(body: PreSeedRequest) -> PreSeedResponse:
     """
-    Classify a participant's Communicator Superpower from free text.
+    Classify a participant's Communicator Superpower from free text or LinkedIn URL.
+
+    If *url* is provided (LinkedIn profile), fetches the public profile and
+    extracts name + headline + summary as classifier input. Otherwise uses *text*.
 
     Runs the synchronous Claude Haiku classifier in a thread pool so it
     doesn't block the event loop.
     """
-    if not body.text or not body.text.strip():
+    from backend.linkedin import fetch_linkedin_profile, is_linkedin_url
+
+    text = (body.text or "").strip()
+    name = body.name
+
+    # LinkedIn URL flow: fetch profile text, auto-detect name
+    if body.url and not is_linkedin_url(body.url):
+        raise HTTPException(status_code=422, detail="Invalid LinkedIn URL. Expected format: https://linkedin.com/in/username")
+    if body.url and is_linkedin_url(body.url):
+        try:
+            profile_text = await fetch_linkedin_profile(body.url)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Could not fetch LinkedIn profile: {exc}")
+        except Exception:
+            logger.exception("LinkedIn fetch failed for %s", body.url)
+            raise HTTPException(status_code=422, detail="Could not fetch LinkedIn profile. The profile may be private or LinkedIn may be unavailable.")
+        # Use fetched text, but append any user-provided text as extra context
+        text = f"{profile_text}\n{text}" if text else profile_text
+        # Auto-detect name from first line if user didn't provide one
+        if not name:
+            first_line = profile_text.split("\n")[0].strip()
+            if first_line:
+                name = first_line
+
+    if not text:
         raise HTTPException(status_code=422, detail="text must be non-empty")
+
     try:
-        result = await asyncio.to_thread(_preseed_classify, body.text)
+        result = await asyncio.to_thread(_preseed_classify, text)
     except (KeyError, _anthropic.AuthenticationError):
         raise HTTPException(status_code=503, detail="Anthropic API key is invalid or not configured")
 
@@ -1053,11 +1092,11 @@ async def pre_seed_participant(body: PreSeedRequest) -> PreSeedResponse:
     participant_id: str | None = None
     async with get_db_session() as db:
         participant = None
-        if body.name:
+        if name:
             row = await db.execute(
                 select(Participant).where(
                     Participant.user_id == _DEFAULT_USER_ID,
-                    Participant.name == body.name,
+                    Participant.name == name,
                 )
             )
             participant = row.scalar_one_or_none()
@@ -1065,8 +1104,8 @@ async def pre_seed_participant(body: PreSeedRequest) -> PreSeedResponse:
         if participant is None:
             participant = Participant(
                 user_id=_DEFAULT_USER_ID,
-                name=body.name,
-                notes=body.text,
+                name=name,
+                notes=text,
                 ps_type=result.type,
                 ps_confidence=result.confidence,
                 ps_reasoning=result.reasoning,
@@ -1074,7 +1113,7 @@ async def pre_seed_participant(body: PreSeedRequest) -> PreSeedResponse:
             )
             db.add(participant)
         else:
-            participant.notes = body.text
+            participant.notes = text
             participant.ps_type = result.type
             participant.ps_confidence = result.confidence
             participant.ps_reasoning = result.reasoning
@@ -1822,16 +1861,24 @@ async def _handle_session_end(
         }
     )
 
+    # Audio capture is stopped by the frontend when it receives session_ended.
+    # No separate stop_capture message needed — it raced with ws.close().
     await ws.close()
 
     # ── Post-session background tasks (do not block WebSocket close) ──
     if has_utterances:
-        asyncio.create_task(
+        bg = getattr(ws.app.state, "background_tasks", None)
+        t1 = asyncio.create_task(
             _generate_session_debrief(pipeline.session_id, pipeline.utterances, scores)
         )
-        asyncio.create_task(
+        t2 = asyncio.create_task(
             _update_coaching_playbook(pipeline, scores)
         )
+        if bg is not None:
+            bg.add(t1)
+            bg.add(t2)
+            t1.add_done_callback(bg.discard)
+            t2.add_done_callback(bg.discard)
 
 
 async def _generate_session_debrief(

@@ -61,6 +61,32 @@ Audio chunks flow from the named pipe into a Deepgram WebSocket session in `back
 
 Only `is_final` utterances feed the coaching pipeline.
 
+### Audio lifecycle (session start/end)
+
+The Swift AudioCapture binary is managed by Electron's main process via IPC:
+
+```
+Session start ("Go Live"):
+  Renderer → swift:start IPC → Electron main → spawnCapture()
+  → kills orphans by PID (pgrep + process.kill, not pkill — avoids race)
+  → spawns fresh Swift binary → creates /tmp/persuasion_audio.pipe
+  → Python AudioPipeReader.start() opens the FIFO
+
+Session end:
+  Python _handle_session_end() → sends {"type": "session_ended"} over WS
+  → Renderer receives session_ended → swift:stop IPC → Electron main → stopCapture()
+  → SIGTERM to Swift binary (PID-specific, not pkill)
+  Python AudioPipeReader.stop() → removes the named pipe (single owner)
+
+  Also: ws.onclose handler calls stopCapture() as safety net for dropped connections.
+
+Server shutdown (lifespan):
+  Cancels tracked background tasks (debrief, playbook updates)
+  Pipe cleanup owned by AudioPipeReader.stop() — not duplicated here
+```
+
+**Why this matters:** without explicit lifecycle management, the Swift binary outlives its session. Subsequent "Go Live" sessions find the old process still writing to the pipe, flooding Deepgram with stale audio. The `swift:start` → `swift:stop` cycle prevents orphaned processes.
+
 ---
 
 ## Backend modules
@@ -193,9 +219,13 @@ Sessions 15 → ≈0.91 (behavioral evidence dominates)
 Write-back on confidence delta >0.05 AND every 30 seconds (crash-safe).
 Not "or session end" — crash mid-session would otherwise lose all updates.
 
+### `linkedin.py` — LinkedIn Public Profile Scraper
+
+Fetches public OpenGraph meta tags and JSON-LD structured data from LinkedIn profile URLs. Used by the pre-seed endpoint (`POST /participants/pre-seed`) when a URL is provided instead of (or alongside) free text. Extracts name, headline, and summary without authentication — reads only what LinkedIn renders for search engines. The regex validator anchors the URL to prevent SSRF via path traversal.
+
 ### `pre_seeding.py` — Pre-Meeting Participant Classification
 
-Before a meeting, the user can paste a bio, email thread, or LinkedIn blurb for a participant. The module classifies the text into a Superpower type using signal-pattern matching (same logic/narrative/advocacy/analysis axes as the profiler). Accuracy gate: must classify ≥70% of 5 known profiles correctly before deployment.
+Before a meeting, the user can paste a bio, email thread, LinkedIn URL, or LinkedIn blurb for a participant. The module classifies the text into a Superpower type using signal-pattern matching (same logic/narrative/advocacy/analysis axes as the profiler). Accuracy gate: must classify ≥70% of 5 known profiles correctly before deployment.
 
 ### `fingerprint.py` — Speaker Identity Resolution
 
@@ -235,8 +265,17 @@ Processes a recorded audio file (`.wav`, `.m4a`, `.mp3`) through Deepgram's REST
 {"type": "coaching_prompt", "layer": "audience", "text": "...", "is_fallback": false, "triggered_by": "elm:ego_threat", "speaker_id": "speaker_1"}
 {"type": "pong"}
 {"type": "session_ended", "session_id": "...", "persuasion_score": 72, "growth_delta": 4.2}
+{"type": "swift_restart_needed"}
+{"type": "audio_level", "level": 0.42}
+{"type": "no_audio", "message": "No audio detected. ..."}
 {"type": "error", "message": "..."}
 ```
+
+**Audio lifecycle messages:**
+- `session_ended` — client stops AudioCapture on receipt (no separate stop_capture message — that design raced with ws.close()). Also triggers stopCapture on ws.onclose as a safety net.
+- `swift_restart_needed` — sent when the silence watchdog fires (no audio for 5s), tells Electron to restart the Swift binary
+- `audio_level` — RMS audio level (0.0–1.0), sent ~4×/sec for the sound level indicator
+- `no_audio` — warning when no audio arrives within the first 5 seconds, or Deepgram connection fails
 
 ---
 

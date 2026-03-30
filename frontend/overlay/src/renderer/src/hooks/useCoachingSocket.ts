@@ -106,6 +106,10 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
   }) => {
     if (phaseRef.current !== "idle") return;
 
+    // Ensure the Swift audio capture binary is running before we connect.
+    // It may have been stopped by the previous session's stop_capture signal.
+    window.api.startCapture();
+
     setConnectionState("connecting");
     updatePhase("active");
     setPrompts([]);
@@ -215,6 +219,9 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
         // FIFO. Ask the main process to restart the capture binary.
         window.api.restartCapture();
       } else if (msg.type === "session_ended") {
+        // Stop AudioCapture immediately on session_ended — this is more reliable
+        // than a separate stop_capture message which races with ws.close().
+        window.api.stopCapture();
         setSessionResult(msg as unknown as SessionEndData);
         updatePhase("ended");
         setConnectionState("idle");
@@ -225,6 +232,9 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
 
     ws.onclose = () => {
       stopPing();
+      // Always stop capture on WS close as a safety net — if session_ended
+      // was never received (crash, network drop), prevent orphaned Swift processes.
+      window.api.stopCapture();
       if (phaseRef.current !== "ended") {
         // Reset phase so startSession() guard lets the user retry.
         updatePhase("idle");

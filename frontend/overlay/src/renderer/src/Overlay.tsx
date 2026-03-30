@@ -209,6 +209,9 @@ export function Overlay(): React.ReactElement {
   // Retro import — lift jobId so it survives navigation away and back
   const [activeRetroJobId, setActiveRetroJobId] = useState<string | null>(null);
 
+  // Profile count for home screen badge
+  const [profileCount, setProfileCount] = useState<number | null>(null);
+
   // Audio status (from Electron main process via Swift binary OR backend no_audio)
   const [audioStatus, setAudioStatus] = useState<{ type: string; message: string } | null>(null);
   const [audioToastDismissed, setAudioToastDismissed] = useState(false);
@@ -267,6 +270,15 @@ export function Overlay(): React.ReactElement {
     const api = (window as unknown as { api?: { openScreenRecording?: () => void } }).api;
     api?.openScreenRecording?.();
   }, []);
+
+  // Fetch profile count for home screen badge
+  useEffect(() => {
+    if (screen !== "home") return;
+    fetch("http://localhost:8000/participants")
+      .then(r => r.ok ? r.json() : [])
+      .then((data: unknown[]) => setProfileCount(data.length))
+      .catch(() => {});
+  }, [screen]);
 
   // Fetch recent sessions when navigating to home, or when search query changes
   useEffect(() => {
@@ -593,7 +605,7 @@ export function Overlay(): React.ReactElement {
         {/* Navigation grid with subtitles */}
         {([
           { label: "Self assessment", sub: "Discover your style", target: "assessment" as Screen, color: "var(--gold)" },
-          { label: "Profiles", sub: "People you've met", target: "profiles" as Screen, color: "var(--blue)" },
+          { label: "Profiles", sub: profileCount ? `${profileCount} saved` : "People you've met", target: "profiles" as Screen, color: "var(--blue)" },
           { label: "Upload & Analyze", sub: "Review a past meeting", target: "retro" as Screen, color: "var(--green)" },
           { label: "Calendar", sub: "Upcoming meetings", target: "calendar" as Screen, color: "#0EA5E9" },
           { label: "Import / Export", sub: "Share team profiles", target: "team-sync" as Screen, color: "var(--text-tertiary)" },

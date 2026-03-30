@@ -146,7 +146,10 @@ class AudioPipeReader:
         logger.info("AudioPipeReader started (%s)", self._pipe_path)
 
     async def stop(self) -> None:
-        """Stop reading and cancel background tasks. Safe to call multiple times."""
+        """Stop reading, cancel background tasks, and clean up the pipe file.
+
+        Safe to call multiple times.
+        """
         if not self._running:
             return
         self._running = False
@@ -161,7 +164,20 @@ class AudioPipeReader:
 
         self._read_task = None
         self._watchdog_task = None
+
+        # Remove the pipe file so stale AudioCapture writers get a broken pipe
+        # signal and the next session starts with a fresh FIFO.
+        self._cleanup_pipe()
         logger.info("AudioPipeReader stopped")
+
+    def _cleanup_pipe(self) -> None:
+        """Remove the named pipe file if it exists."""
+        try:
+            if os.path.exists(self._pipe_path):
+                os.unlink(self._pipe_path)
+                logger.info("AudioPipeReader: removed pipe %s", self._pipe_path)
+        except OSError as exc:
+            logger.warning("AudioPipeReader: could not remove pipe — %s", exc)
 
     @property
     def is_running(self) -> bool:

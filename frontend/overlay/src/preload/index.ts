@@ -67,6 +67,22 @@ contextBridge.exposeInMainWorld("api", {
   },
 
   /**
+   * Tell the main process to start (or restart) the Swift audio capture binary.
+   * Called when a new session begins so audio is flowing before Deepgram connects.
+   */
+  startCapture: (): void => {
+    ipcRenderer.send("swift:start");
+  },
+
+  /**
+   * Tell the main process to stop the Swift audio capture binary.
+   * Called when a session ends to prevent orphaned AudioCapture processes.
+   */
+  stopCapture: (): void => {
+    ipcRenderer.send("swift:stop");
+  },
+
+  /**
    * Open macOS System Settings → Privacy & Security → Screen Recording.
    */
   openScreenRecording: (): void => {

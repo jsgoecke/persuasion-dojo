@@ -746,9 +746,13 @@ export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement 
   // Add-new form state
   const [addName, setAddName] = useState("");
   const [addText, setAddText] = useState("");
+  const [addUrl, setAddUrl] = useState("");
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  const urlRef = useRef<HTMLInputElement>(null);
+
+  const isLinkedInUrl = (s: string) => /^https?:\/\/(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i.test(s.trim());
 
   const fetchProfiles = useCallback(async () => {
     try {
@@ -774,18 +778,32 @@ export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement 
   const handleAdd = async () => {
     const trimName = addName.trim();
     const trimText = addText.trim();
-    if (!trimName || !trimText) return;
+    const trimUrl = addUrl.trim();
+    const hasUrl = isLinkedInUrl(trimUrl);
+
+    // Must have either (name + text) or a LinkedIn URL
+    if (!hasUrl && (!trimName || !trimText)) return;
+
     setAddLoading(true);
     setAddError(null);
     try {
+      const payload: Record<string, string> = {};
+      if (trimName) payload.name = trimName;
+      if (trimText) payload.text = trimText;
+      if (hasUrl) payload.url = trimUrl;
+
       const resp = await fetch(`${API_BASE}/participants/pre-seed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimName, text: trimText }),
+        body: JSON.stringify(payload),
       });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
       setAddName("");
       setAddText("");
+      setAddUrl("");
       setShowAdd(false);
       void fetchProfiles();
     } catch (e) {
@@ -809,6 +827,27 @@ export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement 
   // List view
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Section header */}
+      <div>
+        <div style={{
+          fontFamily: "var(--font-display)",
+          fontSize: 24,
+          fontWeight: 600,
+          color: "var(--gold)",
+          lineHeight: 1.15,
+          marginBottom: 4,
+        }}>
+          Your Network
+        </div>
+        <div style={{
+          fontFamily: "var(--font-body)",
+          fontSize: 13,
+          color: "var(--text-secondary)",
+        }}>
+          {profiles.length} {profiles.length === 1 ? "person" : "people"} profiled
+        </div>
+      </div>
+
       {/* Add new profile button / form */}
       {showAdd ? (
         <div
@@ -824,19 +863,58 @@ export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement 
           <div style={{ fontFamily: "var(--font-body)", fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
             Add participant
           </div>
+
+          {/* LinkedIn URL input */}
+          <div style={{ position: "relative" }}>
+            <input
+              ref={urlRef}
+              style={{
+                ...inputStyle,
+                paddingLeft: 32,
+                fontFamily: "var(--font-mono)",
+                fontSize: 13,
+              }}
+              value={addUrl}
+              onChange={e => setAddUrl(e.target.value)}
+              placeholder="LinkedIn URL (optional)"
+              onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void handleAdd(); }}
+            />
+            <span style={{
+              position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
+              fontSize: 14, color: isLinkedInUrl(addUrl) ? "var(--blue)" : "var(--text-tertiary)",
+              transition: "color 150ms ease",
+            }}>
+              in
+            </span>
+          </div>
+
+          {isLinkedInUrl(addUrl) && (
+            <div style={{
+              fontFamily: "var(--font-body)", fontSize: 12, color: "var(--blue)",
+              display: "flex", alignItems: "center", gap: 6,
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: 3, background: "var(--blue)", display: "inline-block" }} />
+              Profile will be fetched automatically — name and notes are optional
+            </div>
+          )}
+
+          <div style={{
+            height: 1, background: "var(--border-subtle)", margin: "2px 0",
+          }} />
+
           <input
             ref={nameRef}
             style={inputStyle}
             value={addName}
             onChange={e => setAddName(e.target.value)}
-            placeholder="Name"
+            placeholder={isLinkedInUrl(addUrl) ? "Name (auto-detected from LinkedIn)" : "Name"}
             onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void handleAdd(); }}
           />
           <textarea
             style={textareaStyle}
             value={addText}
             onChange={e => setAddText(e.target.value)}
-            placeholder={"LinkedIn bio, email style, meeting notes…"}
+            placeholder={isLinkedInUrl(addUrl) ? "Extra context (optional)" : "LinkedIn bio, email style, meeting notes…"}
             onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void handleAdd(); }}
           />
           {addError && (
@@ -845,25 +923,25 @@ export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement 
           <div style={{ display: "flex", gap: 8 }}>
             <button
               onClick={() => void handleAdd()}
-              disabled={addLoading || !addName.trim() || !addText.trim()}
+              disabled={addLoading || (!isLinkedInUrl(addUrl) && (!addName.trim() || !addText.trim()))}
               style={{
                 flex: 1,
-                height: 42,
+                height: 54,
                 background: "var(--gold)",
                 border: "none",
-                borderRadius: 10,
+                borderRadius: 12,
                 cursor: "pointer",
                 fontFamily: "var(--font-body)",
-                fontSize: 14,
+                fontSize: 16,
                 fontWeight: 500,
                 color: "var(--bg-primary)",
-                opacity: addLoading || !addName.trim() || !addText.trim() ? 0.5 : 1,
+                opacity: addLoading || (!isLinkedInUrl(addUrl) && (!addName.trim() || !addText.trim())) ? 0.5 : 1,
               }}
             >
-              {addLoading ? "Classifying…" : "Classify"}
+              {addLoading ? (isLinkedInUrl(addUrl) ? "Fetching & classifying…" : "Classifying…") : "Classify"}
             </button>
             <button
-              onClick={() => { setShowAdd(false); setAddName(""); setAddText(""); setAddError(null); }}
+              onClick={() => { setShowAdd(false); setAddName(""); setAddText(""); setAddUrl(""); setAddError(null); }}
               style={{
                 height: 42,
                 background: "none",
@@ -885,15 +963,19 @@ export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement 
           onClick={() => { setShowAdd(true); setTimeout(() => nameRef.current?.focus(), 50); }}
           style={{
             width: "100%",
-            height: 42,
-            background: "none",
-            border: "1px dashed var(--border-medium)",
-            borderRadius: 10,
+            height: 50,
+            background: "transparent",
+            border: "1.5px solid var(--gold)",
+            borderRadius: 12,
             cursor: "pointer",
             fontFamily: "var(--font-body)",
             fontSize: 14,
-            color: "var(--text-secondary)",
+            fontWeight: 500,
+            color: "var(--gold)",
+            transition: "background 200ms ease",
           }}
+          onMouseEnter={e => { e.currentTarget.style.background = "var(--gold-bg)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
         >
           + Add participant
         </button>
@@ -908,14 +990,26 @@ export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement 
         <div
           style={{
             textAlign: "center",
-            padding: 32,
+            padding: "40px 24px",
+          }}
+        >
+          <div style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 20,
+            fontWeight: 600,
+            color: "var(--gold)",
+            marginBottom: 8,
+          }}>
+            No profiles yet
+          </div>
+          <div style={{
             fontFamily: "var(--font-body)",
             fontSize: 13,
             lineHeight: 1.6,
             color: "var(--text-tertiary)",
-          }}
-        >
-          No participant profiles yet. Add people before meetings or analyze a transcript to auto-detect participants.
+          }}>
+            Add a participant to start building your network intelligence
+          </div>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

@@ -36,6 +36,13 @@ const DISPLAY = "var(--font-display)";
 const BODY    = "var(--font-body)";
 const MONO    = "var(--font-mono)";
 
+const ARCHETYPE_ABBREV: Record<string, string> = {
+  Architect: "ARC",
+  Firestarter: "FIR",
+  Inquisitor: "INQ",
+  "Bridge Builder": "BRI",
+};
+
 // ── Types ────────────────────────────────────────────────────────────────────
 type Screen =
   | "home"
@@ -164,7 +171,8 @@ const ARCHETYPE_INFO: Record<Archetype, { name: string; axes: string; descriptio
 export function Overlay(): React.ReactElement {
   const {
     sessionId: liveSessionId, connectionState, sessionPhase, currentPrompt, prompts, sessionResult,
-    errorMessage, audioLevel, transcripts, startSession, endSession, dismissPrompt, clearError, resetSession,
+    errorMessage, audioLevel, transcripts, speakerNames, detectedProfiles,
+    startSession, endSession, dismissPrompt, clearError, resetSession, confirmProfile,
   } = useCoachingSocket();
 
   const [screen, setScreen]                 = useState<Screen>("home");
@@ -1346,7 +1354,7 @@ export function Overlay(): React.ReactElement {
             transcripts.filter(t => t.is_final).slice(-10).map((t, i) => (
               <div key={i} style={{ fontSize: 13, fontFamily: MONO, color: "var(--text-secondary)", lineHeight: 1.55, marginBottom: 4 }}>
                 <span style={{ color: "var(--text-tertiary)", fontSize: 11, marginRight: 6 }}>
-                  {t.speaker_id.replace("speaker_", "S")}
+                  {t.speaker_id === "user" ? "You" : speakerNames[t.speaker_id] || t.speaker_id.replace("counterpart_", "S").replace("speaker_", "S")}
                 </span>
                 {t.text}
               </div>
@@ -1356,15 +1364,19 @@ export function Overlay(): React.ReactElement {
 
         {/* Participant bar */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingTop: 16, borderTop: "1px solid var(--border-subtle)", marginTop: 16 }}>
-          {[
-            { name: "Sarah", type: "INQ" },
-            { name: "Mike", type: "ARC" },
-            { name: "Kevin", type: "BRI" },
-          ].map(p => (
-            <span key={p.name} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", background: "var(--blue-bg)", borderRadius: 20, fontSize: 12, color: "var(--blue)" }}>
-              {p.name} <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.4, opacity: 0.65 }}>{p.type}</span>
+          {detectedProfiles.length > 0 ? detectedProfiles.map(p => (
+            <span key={p.speaker_id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", background: "var(--blue-bg)", borderRadius: 20, fontSize: 12, color: "var(--blue)" }}>
+              {p.confirmed ? p.suggested_name : speakerNames[p.speaker_id] || p.speaker_id}
+              <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.4, opacity: 0.65 }}>
+                {ARCHETYPE_ABBREV[p.archetype] || "?"}
+              </span>
+              {!p.is_existing && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold)", marginLeft: 2 }} />}
             </span>
-          ))}
+          )) : (
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+              Detecting participants…
+            </span>
+          )}
         </div>
       </div>,
     );
@@ -1444,6 +1456,47 @@ export function Overlay(): React.ReactElement {
           </>
         )}
 
+        {/* Participants detected */}
+        {detectedProfiles.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 }}>
+              Participants detected
+            </div>
+            {detectedProfiles.map(p => (
+              <div key={p.speaker_id} style={{
+                background: "var(--bg-elevated)", borderRadius: 12, padding: "14px 18px", marginBottom: 8,
+                borderLeft: `3px solid ${p.is_existing ? "#0EA5E9" : "var(--gold)"}`,
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+              }}>
+                <div>
+                  {p.is_existing ? (
+                    <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                      {p.suggested_name} · <span style={{ color: "#0EA5E9", fontSize: 12 }}>{p.archetype}</span>
+                      <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 8 }}>profile updated</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        defaultValue={p.confirmed ? p.suggested_name : speakerNames[p.speaker_id] || p.suggested_name || p.speaker_id}
+                        onBlur={e => confirmProfile(p.speaker_id, e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                        style={{
+                          fontSize: 13, color: "var(--text-secondary)", fontWeight: 600,
+                          background: "transparent", border: "1px solid transparent", borderRadius: 6,
+                          padding: "2px 6px", outline: "none", cursor: "text",
+                        }}
+                        onFocus={e => { e.target.style.borderColor = "var(--border-subtle)"; }}
+                      />
+                      <span style={{ fontSize: 12, color: "var(--gold)" }}>{p.archetype}</span>
+                      <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>new profile</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
         {/* Key moments */}
         <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 }}>
           Key moments
@@ -1511,9 +1564,9 @@ export function Overlay(): React.ReactElement {
   if (screen === "retro") {
     return shell(
       <div style={{ animation: "fadeIn 200ms ease-out" }}>
-        {topBar("Upload & Analyze", () => setScreen("home"))}
+        {topBar("Upload & Analyze", () => { setActiveRetroJobId(null); setScreen("home"); })}
         <RetroImportPane
-          onBack={() => setScreen("home")}
+          onBack={() => { setActiveRetroJobId(null); setScreen("home"); }}
           onViewSession={(sid) => { setSelectedSessionId(sid); setScreen("transcript"); }}
           activeJobId={activeRetroJobId}
           onJobIdChange={setActiveRetroJobId}

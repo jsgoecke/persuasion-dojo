@@ -15,6 +15,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import type {
   CoachingPrompt,
   ConnectionState,
+  DetectedProfile,
   SessionEndData,
   SessionPhase,
 } from "../types";
@@ -50,6 +51,10 @@ export interface CoachingSocketState {
   audioLevel: number;
   /** Live transcript entries, newest last. */
   transcripts: TranscriptEntry[];
+  /** Resolved speaker names: counterpart_0 → "Sarah Chen". */
+  speakerNames: Record<string, string>;
+  /** Profiles detected during the session. */
+  detectedProfiles: DetectedProfile[];
 }
 
 export interface SessionParticipant {
@@ -70,6 +75,8 @@ export interface CoachingSocketActions {
   clearError: () => void;
   /** Reset session state and return to idle menu (used from session-end card). */
   resetSession: () => void;
+  /** Confirm or edit a detected profile name. */
+  confirmProfile: (speakerId: string, name: string) => void;
 }
 
 export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions {
@@ -81,6 +88,8 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
   const [errorMessage, setErrorMessage]     = useState<string | null>(null);
   const [audioLevel, setAudioLevel]         = useState<number>(0);
   const [transcripts, setTranscripts]       = useState<TranscriptEntry[]>([]);
+  const [speakerNames, setSpeakerNames]     = useState<Record<string, string>>({});
+  const [detectedProfiles, setDetectedProfiles] = useState<DetectedProfile[]>([]);
 
   const wsRef       = useRef<WebSocket | null>(null);
   const pingRef     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -214,6 +223,29 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
           received_at: Date.now(),
         };
         setPrompts(prev => [prompt, ...prev].slice(0, MAX_HISTORY));
+      } else if (msg.type === "speaker_identified") {
+        const sid = msg.speaker_id as string;
+        const name = msg.name as string;
+        if (sid && name) {
+          setSpeakerNames(prev => ({ ...prev, [sid]: name }));
+        }
+      } else if (msg.type === "profile_detected") {
+        const profile: DetectedProfile = {
+          speaker_id: (msg.speaker_id as string) ?? "",
+          suggested_name: (msg.suggested_name as string) ?? "",
+          archetype: (msg.archetype as string) ?? "",
+          confidence: (msg.confidence as number) ?? 0,
+          is_existing: Boolean(msg.is_existing),
+          confirmed: false,
+          participant_id: msg.participant_id as string | undefined,
+        };
+        setDetectedProfiles(prev => {
+          // Don't add duplicates
+          if (prev.some(p => p.speaker_id === profile.speaker_id)) {
+            return prev.map(p => p.speaker_id === profile.speaker_id ? { ...p, ...profile, confirmed: p.confirmed } : p);
+          }
+          return [...prev, profile];
+        });
       } else if (msg.type === "swift_restart_needed") {
         // Python silence watchdog fired — Swift binary stopped writing to the
         // FIFO. Ask the main process to restart the capture binary.
@@ -281,8 +313,23 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
     setTranscripts([]);
     setErrorMessage(null);
     setAudioLevel(0);
+    setSpeakerNames({});
+    setDetectedProfiles([]);
     updatePhase("idle");
   }, [updatePhase]);
+
+  const confirmProfile = useCallback((speakerId: string, name: string) => {
+    // Send confirmation to backend
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "confirm_profile", speaker_id: speakerId, name }));
+    }
+    // Optimistically update local state
+    setSpeakerNames(prev => ({ ...prev, [speakerId]: name }));
+    setDetectedProfiles(prev =>
+      prev.map(p => p.speaker_id === speakerId ? { ...p, suggested_name: name, confirmed: true } : p)
+    );
+  }, []);
 
   // Clean up on unmount.
   useEffect(() => {
@@ -302,10 +349,13 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
     errorMessage,
     audioLevel,
     transcripts,
+    speakerNames,
+    detectedProfiles,
     startSession,
     endSession,
     dismissPrompt,
     clearError,
     resetSession,
+    confirmProfile,
   };
 }

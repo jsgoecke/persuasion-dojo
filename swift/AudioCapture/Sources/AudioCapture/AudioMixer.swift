@@ -1,19 +1,19 @@
 import Foundation
 
-/// Mixes two audio streams (screen + mic) into a single coherent PCM stream.
+/// Splits two audio streams (screen + mic) into separate pipes for independent
+/// transcription — screen audio goes to Deepgram with diarization (counterparts),
+/// mic audio goes to Deepgram without diarization (always the user).
 ///
 /// Both ScreenAudioCapture and MicCapture produce 16 kHz mono Int16 LE samples.
-/// Writing both directly to the FIFO produces interleaved chunks from different
-/// sources — Deepgram sees random context-switching noise, not speech.
-///
 /// AudioMixer accumulates samples from each source into separate buffers, then
-/// a 20 ms timer fires and mixes them sample-by-sample (additive with clamping)
-/// before writing one coherent chunk to PipeWriter.
+/// a 10 ms timer fires and writes each source to its own PipeWriter independently.
 ///
-/// If only one source has data for a given flush, those samples pass through
-/// unmixed. If neither has data, nothing is written (no silence padding).
+/// Each pipe gets rate-controlled output at 32 KB/s (1× realtime) when its source
+/// has data. If a source has no data for a given flush, nothing is written to that
+/// pipe (no silence padding).
 final class AudioMixer {
-    private let pipeWriter: PipeWriter
+    private let systemWriter: PipeWriter
+    private let micWriter: PipeWriter
     private let queue = DispatchQueue(label: "audio.mixer", qos: .userInteractive)
 
     // Separate accumulation buffers for each source.
@@ -33,13 +33,15 @@ final class AudioMixer {
     private let samplesPerFlush: Int = 160
 
     // Rate metering — log output rate every 5 seconds
-    private var meterBytesOut: Int = 0
+    private var meterSystemOut: Int = 0
+    private var meterMicOut: Int = 0
     private var meterScreenIn: Int = 0
     private var meterMicIn: Int = 0
     private var meterStart: UInt64 = 0
 
-    init(pipeWriter: PipeWriter) {
-        self.pipeWriter = pipeWriter
+    init(systemWriter: PipeWriter, micWriter: PipeWriter) {
+        self.systemWriter = systemWriter
+        self.micWriter = micWriter
     }
 
     // MARK: - Lifecycle
@@ -108,13 +110,12 @@ final class AudioMixer {
         }
     }
 
-    /// Mix available samples and write to PipeWriter.
+    /// Write each source's samples to its own pipe independently.
     /// Called on `queue` by the timer — never re-entrant.
     ///
-    /// Outputs exactly `samplesPerFlush` (320) samples per tick, locking the
-    /// output rate to 32 KB/s (1× realtime at 16 kHz mono Int16). Takes up to
-    /// 320 samples from each buffer, mixes them, and writes the result.
-    /// Remaining samples stay in the buffer for the next flush.
+    /// Each pipe gets up to `samplesPerFlush` (160) samples per tick, locking
+    /// the output rate to 32 KB/s per pipe (1× realtime at 16 kHz mono Int16).
+    /// If a source has no data, nothing is written to that pipe.
     private func _flush() {
         let screenBytes = screenBuffer.count
         let micBytes = micBuffer.count
@@ -122,15 +123,10 @@ final class AudioMixer {
         // Both empty — nothing to do
         guard screenBytes > 0 || micBytes > 0 else { return }
 
-        let screenSamples = min(screenBytes / MemoryLayout<Int16>.size, samplesPerFlush)
-        let micSamples = min(micBytes / MemoryLayout<Int16>.size, samplesPerFlush)
-
-        // Fixed-size output: exactly samplesPerFlush samples per tick.
-        // Zero-initialized — sources that have fewer samples contribute silence.
-        var output = [Int16](repeating: 0, count: samplesPerFlush)
-
-        // Read up to samplesPerFlush screen samples
-        if screenSamples > 0 {
+        // Write screen audio to system pipe
+        if screenBytes > 0 {
+            let screenSamples = min(screenBytes / MemoryLayout<Int16>.size, samplesPerFlush)
+            var output = [Int16](repeating: 0, count: screenSamples)
             screenBuffer.withUnsafeBytes { raw in
                 let samples = raw.bindMemory(to: Int16.self)
                 for i in 0..<screenSamples {
@@ -138,23 +134,26 @@ final class AudioMixer {
                 }
             }
             screenBuffer.removeFirst(screenSamples * MemoryLayout<Int16>.size)
+            let writeData = output.withUnsafeBufferPointer { Data(buffer: $0) }
+            systemWriter.write(writeData)
+            meterSystemOut += writeData.count
         }
 
-        // Add up to samplesPerFlush mic samples (additive mixing with clamping)
-        if micSamples > 0 {
+        // Write mic audio to mic pipe
+        if micBytes > 0 {
+            let micSamples = min(micBytes / MemoryLayout<Int16>.size, samplesPerFlush)
+            var output = [Int16](repeating: 0, count: micSamples)
             micBuffer.withUnsafeBytes { raw in
                 let samples = raw.bindMemory(to: Int16.self)
                 for i in 0..<micSamples {
-                    let mixed = Int32(output[i]) + Int32(samples[i])
-                    output[i] = Int16(clamping: mixed)
+                    output[i] = samples[i]
                 }
             }
             micBuffer.removeFirst(micSamples * MemoryLayout<Int16>.size)
+            let writeData = output.withUnsafeBufferPointer { Data(buffer: $0) }
+            micWriter.write(writeData)
+            meterMicOut += writeData.count
         }
-
-        let writeData = output.withUnsafeBufferPointer { Data(buffer: $0) }
-        pipeWriter.write(writeData)
-        meterBytesOut += writeData.count
 
         // Log rate every ~5 seconds
         let now = DispatchTime.now().uptimeNanoseconds
@@ -162,13 +161,14 @@ final class AudioMixer {
         let elapsedNs = now - meterStart
         if elapsedNs >= 5_000_000_000 {
             let elapsedS = Double(elapsedNs) / 1_000_000_000
-            fputs(String(format: "AudioMixer: %.1fs — screen_in=%.0f B/s  mic_in=%.0f B/s  out=%.0f B/s (%.1fx)\n",
+            fputs(String(format: "AudioMixer: %.1fs — screen_in=%.0f B/s  mic_in=%.0f B/s  sys_out=%.0f B/s  mic_out=%.0f B/s\n",
                          elapsedS,
                          Double(meterScreenIn) / elapsedS,
                          Double(meterMicIn) / elapsedS,
-                         Double(meterBytesOut) / elapsedS,
-                         Double(meterBytesOut) / elapsedS / 32000.0), stderr)
-            meterBytesOut = 0
+                         Double(meterSystemOut) / elapsedS,
+                         Double(meterMicOut) / elapsedS), stderr)
+            meterSystemOut = 0
+            meterMicOut = 0
             meterScreenIn = 0
             meterMicIn = 0
             meterStart = now

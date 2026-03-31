@@ -10,23 +10,26 @@ Deep technical reference for Persuasion Dojo. Read this before touching any back
 ┌─────────────────────────────────────────────────────────────────┐
 │                        macOS host                               │
 │                                                                 │
-│  ┌──────────────┐     named pipe      ┌─────────────────────┐  │
-│  │ Swift binary │ ──────────────────► │  backend/audio.py   │  │
-│  │ (SCK audio)  │                     │  (pipe reader)      │  │
+│  ┌──────────────┐  system pipe        ┌─────────────────────┐  │
+│  │ Swift binary │ ──────────────────► │  system AudioPipe   │  │
+│  │ (SCK + mic)  │                     │  (diarization ON)   │  │
+│  │              │  mic pipe           ├─────────────────────┤  │
+│  │  AudioMixer  │ ──────────────────► │  mic AudioPipe      │  │
+│  │  (split out) │                     │  (no diarization)   │  │
 │  └──────────────┘                     └──────────┬──────────┘  │
 │                                                  │ PCM chunks  │
 │                                       ┌──────────▼──────────┐  │
-│                                       │ backend/             │  │
+│                                       │ 2× Deepgram WS      │  │
 │                                       │ transcription.py     │  │
-│                                       │ (Deepgram WS client) │  │
 │                                       └──────────┬──────────┘  │
-│                                                  │ utterances  │
+│                                          user │  │ counterpart │
 │                                       ┌──────────▼──────────┐  │
 │                                       │  backend/main.py    │  │
 │                                       │  SessionPipeline    │  │
 │                                       │  ├─ ELMDetector     │  │
 │                                       │  ├─ Profiler        │  │
 │                                       │  ├─ CoachingEngine  │  │
+│                                       │  ├─ SpeakerResolver │  │
 │                                       │  └─ ScoringEngine   │  │
 │                                       └──────────┬──────────┘  │
 │                                                  │ WebSocket   │
@@ -47,7 +50,7 @@ Deep technical reference for Persuasion Dojo. Read this before touching any back
 
 ScreenCaptureKit (macOS 12.3+) captures system audio at the OS level — it intercepts the audio mix before it leaves the device. This means it captures Zoom, Teams, Google Meet, Webex, and any browser-based meeting tool without a plugin, SDK agreement, or screen recording of video.
 
-The Swift binary (`swift/AudioCapture/`) runs as a separate process. It writes raw PCM audio to a **named pipe**. Python reads from the pipe in `backend/audio.py`.
+The Swift binary (`swift/AudioCapture/`) runs as a separate process. Its `AudioMixer` splits screen audio (counterparts) and mic audio (user) into **two named pipes** (`/tmp/persuasion_audio.pipe` for system, `/tmp/persuasion_mic.pipe` for mic). Python reads from both in `backend/audio.py` — one `AudioPipeReader` per pipe.
 
 ### Fallback
 
@@ -55,11 +58,11 @@ If the Screen Recording permission is revoked (macOS silently revokes it on bund
 
 ### Deepgram streaming
 
-Audio chunks flow from the named pipe into a Deepgram WebSocket session in `backend/transcription.py`. Deepgram returns:
-- `is_final: false` — interim (partial) transcripts, discarded
-- `is_final: true` — committed utterances with speaker label (`speaker_0`, `speaker_1`, ...)
+Each pipe feeds its own Deepgram WebSocket session in `backend/transcription.py`:
+- **System transcriber** (diarization ON) — counterpart audio. Deepgram labels speakers `speaker_0`, `speaker_1`, etc. The session handler prefixes these as `counterpart_0`, `counterpart_1`.
+- **Mic transcriber** (diarization OFF) — user audio. All utterances get speaker ID `"user"`.
 
-Only `is_final` utterances feed the coaching pipeline.
+Deepgram returns `is_final: true` for committed utterances and `is_final: false` for interim partials. Only `is_final` utterances feed the coaching pipeline.
 
 ### Audio lifecycle (session start/end)
 
@@ -69,8 +72,8 @@ The Swift AudioCapture binary is managed by Electron's main process via IPC:
 Session start ("Go Live"):
   Renderer → swift:start IPC → Electron main → spawnCapture()
   → kills orphans by PID (pgrep on full binary path + process.kill, not pkill — avoids race)
-  → spawns fresh Swift binary → creates /tmp/persuasion_audio.pipe
-  → Python AudioPipeReader.start() replaces any stale pipe and opens the FIFO
+  → spawns fresh Swift binary → creates /tmp/persuasion_audio.pipe + /tmp/persuasion_mic.pipe
+  → Python creates two AudioPipeReaders (system + mic), reusing existing FIFOs
 
 Session end:
   Python _handle_session_end() → sends {"type": "session_ended"} over WS
@@ -228,9 +231,13 @@ Fetches public OpenGraph meta tags and JSON-LD structured data from LinkedIn pro
 
 Before a meeting, the user can paste a bio, email thread, LinkedIn URL, or LinkedIn blurb for a participant. The module classifies the text into a Superpower type using signal-pattern matching (same logic/narrative/advocacy/analysis axes as the profiler). Accuracy gate: must classify ≥70% of 5 known profiles correctly before deployment.
 
-### `fingerprint.py` — Speaker Identity Resolution
+### `speaker_resolver.py` — LLM-Based Speaker Name Resolution
 
-Maps Deepgram's ephemeral `speaker_0`, `speaker_1` labels to persistent `Participant` records across sessions. Uses name matching (from meeting title + pre-seed input) and voice fingerprint heuristics to maintain continuity when speaker indices reset between Deepgram sessions.
+Maps diarized `counterpart_N` labels to real attendee names during live sessions. Runs a background asyncio task that periodically (every 60s) sends the accumulated transcript + calendar roster to Claude Haiku, which returns name → speaker_id mappings with confidence scores. High-confidence mappings (≥0.8) are locked automatically. User can confirm or edit names via the frontend, which sends a `confirm_profile` WebSocket message that permanently locks the mapping. Names are validated against the known attendees list before being accepted (LLM output trust boundary).
+
+### `identity.py` — Speaker Identity Resolution
+
+Maps speaker names to persistent `Participant` records across sessions. Uses fuzzy name matching (≥85% similarity ratio) against existing profiles. Rejects generic IDs (`speaker_N`, `counterpart_N`) that carry no identity signal.
 
 ### `calendar_service.py` — Google Calendar Integration
 
@@ -244,9 +251,9 @@ Exports participant profiles as AES-256 encrypted JSON. A passphrase is required
 
 Text-only mode (no audio). The user types their pitch or argument; an AI opponent responds in the style of a specified Superpower type. The coaching engine fires on each exchange. Target round-trip latency: <3 seconds. The AI opponent response is streamed to reduce perceived latency.
 
-### `retro_import.py` — Retroactive Audio Processing
+### `retro_import.py` — Retroactive Audio + Text Transcript Processing
 
-Processes a recorded audio file (`.wav`, `.m4a`, `.mp3`) through Deepgram's REST API (not the streaming WebSocket). Produces a full transcript and runs the full coaching pipeline retroactively, generating a debrief for a meeting that wasn't coached live.
+Processes recorded audio files (`.wav`, `.m4a`, `.mp3`) through Deepgram's REST API, or text transcripts (`.txt`, `.md`, `.json`, `.vtt`, `.srt`) via the universal parser. The `parse_text_transcript()` function auto-detects 9 formats: JSON/Deepgram, WebVTT, SRT, Teams inline VTT, Google Meet, Zoom bracket/leading timestamp, Markdown bold, and plain text. Produces a full transcript and runs the coaching pipeline retroactively, extracting participant profiles and generating a debrief.
 
 ---
 
@@ -255,17 +262,20 @@ Processes a recorded audio file (`.wav`, `.m4a`, `.mp3`) through Deepgram's REST
 ### Client → server
 
 ```json
-{"type": "utterance", "speaker_id": "speaker_0", "text": "...", "is_final": true, "start": 12.3, "end": 14.1}
+{"type": "utterance", "speaker_id": "user", "text": "...", "is_final": true, "start": 12.3, "end": 14.1}
 {"type": "ping"}
 {"type": "session_end"}
+{"type": "confirm_profile", "speaker_id": "counterpart_0", "name": "Sarah Chen"}
 ```
 
 ### Server → client
 
 ```json
-{"type": "coaching_prompt", "layer": "audience", "text": "...", "is_fallback": false, "triggered_by": "elm:ego_threat", "speaker_id": "speaker_1"}
+{"type": "coaching_prompt", "layer": "audience", "text": "...", "is_fallback": false, "triggered_by": "elm:ego_threat", "speaker_id": "counterpart_0"}
 {"type": "pong"}
 {"type": "session_ended", "session_id": "...", "persuasion_score": 72, "growth_delta": 4.2}
+{"type": "speaker_identified", "speaker_id": "counterpart_0", "name": "Sarah Chen", "confidence": 0.85}
+{"type": "profile_detected", "speaker_id": "counterpart_0", "suggested_name": "Sarah Chen", "archetype": "Inquisitor", "confidence": 0.72, "is_existing": false}
 {"type": "swift_restart_needed"}
 {"type": "audio_level", "level": 0.42}
 {"type": "no_audio", "message": "No audio detected. ..."}

@@ -827,6 +827,83 @@ class TestParseTextTranscriptPlainText:
 
 
 # ---------------------------------------------------------------------------
+# parse_text_transcript — Markdown bold format (**Name:** text)
+# ---------------------------------------------------------------------------
+
+class TestParseTextTranscriptMarkdown:
+    def test_markdown_bold_speaker(self):
+        text = "**Mark:** Hello everyone.\n**Sarah:** Thanks for joining."
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Mark"
+        assert result[0]["text"] == "Hello everyone."
+        assert result[1]["speaker_id"] == "Sarah"
+        assert result[1]["text"] == "Thanks for joining."
+
+    def test_markdown_with_header_and_metadata_skipped(self):
+        text = (
+            "# Meeting Notes\n"
+            "**Date:** March 26, 2026\n"
+            "**Participants:** Alice, Bob\n"
+            "---\n"
+            "**Alice:** First point.\n"
+            "**Bob:** Second point.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Alice"
+        assert result[1]["speaker_id"] == "Bob"
+
+    def test_markdown_mixed_with_plain(self):
+        text = "**Alice:** Markdown style.\nBob: Plain style."
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Alice"
+        assert result[1]["speaker_id"] == "Bob"
+
+    def test_markdown_four_speakers(self):
+        text = (
+            "**Vish:** Let me set the context.\n"
+            "**Mark:** Sounds good.\n"
+            "**Francisco:** Here's the technical plan.\n"
+            "**Jared:** I agree with that approach.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 4
+        speakers = {r["speaker_id"] for r in result}
+        assert speakers == {"Vish", "Mark", "Francisco", "Jared"}
+
+    def test_continuation_line_uses_previous_markdown_speaker(self):
+        text = "**Alice:** First line.\nContinuation without speaker."
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[1]["speaker_id"] == "Alice"
+
+    def test_real_transcript_format(self):
+        """Full format matching the user's actual uploaded transcript."""
+        text = (
+            "# Sailplane–Dell Cumulus Integration Kickoff\n"
+            "**Date:** March 26, 2026\n"
+            "**Participants:** Vish (COO), Francisco (CTO), Mark (Dell), Jared (Dell)\n"
+            "---\n"
+            "**Mark:** So which time zone are you in, Francisco?\n"
+            "**Vish:** Hey, Jared.\n"
+            "**Jared:** I'm not on my deathbed or anything.\n"
+            "**Francisco:** Let me walk through the integration plan.\n"
+            "**Vish:** Great. Well, I know this is our kickoff.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 5
+        speakers = {r["speaker_id"] for r in result}
+        assert speakers == {"Mark", "Vish", "Jared", "Francisco"}
+        # No metadata lines should appear
+        for r in result:
+            assert not r["text"].startswith("#")
+            assert not r["text"].startswith("**Date")
+            assert not r["text"].startswith("---")
+
+
+# ---------------------------------------------------------------------------
 # parse_text_transcript — JSON format
 # ---------------------------------------------------------------------------
 
@@ -886,6 +963,312 @@ class TestParseTextTranscriptJSON:
         # Falls through to plain-text parsing; one line, no colon → speaker_0
         assert len(result) == 1
         assert result[0]["speaker_id"] == "speaker_0"
+
+
+# ---------------------------------------------------------------------------
+# parse_text_transcript — WebVTT format (.vtt)
+# ---------------------------------------------------------------------------
+
+class TestParseVTT:
+    def test_vtt_with_voice_tags(self):
+        text = (
+            "WEBVTT\n\n"
+            "1\n00:00:03.000 --> 00:00:07.000\n<v Sarah>Hello everyone.\n\n"
+            "2\n00:00:07.000 --> 00:00:15.000\n<v Michael>Thanks for having me.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Sarah"
+        assert result[0]["text"] == "Hello everyone."
+        assert result[1]["speaker_id"] == "Michael"
+        assert result[1]["text"] == "Thanks for having me."
+
+    def test_vtt_without_voice_tags(self):
+        text = (
+            "WEBVTT\n\n"
+            "00:00:03.000 --> 00:00:07.000\nHello everyone.\n\n"
+            "00:00:07.000 --> 00:00:15.000\nThanks for having me.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[1]["speaker_id"] == "speaker_0"
+
+    def test_vtt_multi_line_cue(self):
+        text = (
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:05.000\n"
+            "<v Alice>This is the first line.\n"
+            "And this is the second line.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 1
+        assert result[0]["speaker_id"] == "Alice"
+        assert "first line" in result[0]["text"]
+        assert "second line" in result[0]["text"]
+
+    def test_vtt_closing_voice_tag_stripped(self):
+        text = (
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n"
+            "<v Sarah>Hello everyone.</v>\n"
+        )
+        result = parse_text_transcript(text)
+        assert result[0]["text"] == "Hello everyone."
+        assert "</v>" not in result[0]["text"]
+
+    def test_vtt_timestamps_extracted(self):
+        text = (
+            "WEBVTT\n\n"
+            "00:01:23.456 --> 00:01:30.789\n"
+            "<v Alice>Testing timestamps.\n"
+        )
+        result = parse_text_transcript(text)
+        assert abs(result[0]["start"] - 83.456) < 0.001
+        assert abs(result[0]["end"] - 90.789) < 0.001
+
+    def test_vtt_note_blocks_skipped(self):
+        text = (
+            "WEBVTT\n\n"
+            "NOTE\nThis is a comment block.\n\n"
+            "00:00:01.000 --> 00:00:03.000\n"
+            "<v Alice>Actual speech.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 1
+        assert result[0]["text"] == "Actual speech."
+
+    def test_vtt_empty_cue_skipped(self):
+        text = (
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n\n\n"
+            "00:00:03.000 --> 00:00:05.000\n"
+            "<v Bob>Real text.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 1
+        assert result[0]["speaker_id"] == "Bob"
+
+    def test_vtt_with_bom(self):
+        text = (
+            "\ufeffWEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n"
+            "<v Alice>BOM test.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 1
+        assert result[0]["speaker_id"] == "Alice"
+
+
+# ---------------------------------------------------------------------------
+# parse_text_transcript — SRT format (.srt)
+# ---------------------------------------------------------------------------
+
+class TestParseSRT:
+    def test_srt_with_speaker_colon(self):
+        text = (
+            "1\n00:00:01,000 --> 00:00:04,000\nSpeaker A: Hello.\n\n"
+            "2\n00:00:05,000 --> 00:00:07,000\nSpeaker B: Hi there.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Speaker A"
+        assert result[0]["text"] == "Hello."
+        assert result[1]["speaker_id"] == "Speaker B"
+
+    def test_srt_with_dash_prefix(self):
+        text = (
+            "1\n00:00:01,000 --> 00:00:04,000\n- Sarah: Hello everyone.\n\n"
+            "2\n00:00:05,000 --> 00:00:07,000\n- Michael: Thanks.\n"
+        )
+        result = parse_text_transcript(text)
+        assert result[0]["speaker_id"] == "Sarah"
+        assert result[1]["speaker_id"] == "Michael"
+
+    def test_srt_without_speaker(self):
+        text = (
+            "1\n00:00:01,000 --> 00:00:04,000\nHello everyone.\n\n"
+            "2\n00:00:05,000 --> 00:00:07,000\nThanks.\n"
+        )
+        result = parse_text_transcript(text)
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[1]["speaker_id"] == "speaker_0"
+
+    def test_srt_multi_line_text(self):
+        text = (
+            "1\n00:00:01,000 --> 00:00:04,000\n"
+            "Sarah: This is the first line.\n"
+            "And this continues.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 1
+        assert "first line" in result[0]["text"]
+        assert "continues" in result[0]["text"]
+
+    def test_srt_timestamps_extracted(self):
+        text = "1\n00:01:30,500 --> 00:01:35,250\nHello.\n"
+        result = parse_text_transcript(text)
+        assert abs(result[0]["start"] - 90.5) < 0.001
+        assert abs(result[0]["end"] - 95.25) < 0.001
+
+    def test_srt_malformed_block_skipped(self):
+        text = (
+            "1\n00:00:01,000 --> 00:00:04,000\nReal text.\n\n"
+            "2\n00:00:05,000 --> 00:00:07,000\n\n\n"
+            "3\n00:00:08,000 --> 00:00:10,000\nMore text.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# parse_text_transcript — Teams inline VTT
+# ---------------------------------------------------------------------------
+
+class TestParseTeamsInlineVTT:
+    def test_teams_inline_basic(self):
+        text = (
+            '00:03:02.870 --> 00:03:05.570 <v Sean Landy>So now we get its goal.\n'
+            '00:03:06.100 --> 00:03:09.200 <v Speaker 2>I agree with that.\n'
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Sean Landy"
+        assert result[0]["text"] == "So now we get its goal."
+        assert result[1]["speaker_id"] == "Speaker 2"
+
+    def test_teams_inline_closing_tag(self):
+        text = '00:03:02.870 --> 00:03:05.570 <v Alice>Hello.</v>\n'
+        result = parse_text_transcript(text)
+        assert result[0]["text"] == "Hello."
+        assert "</v>" not in result[0]["text"]
+
+    def test_teams_inline_multiple_speakers(self):
+        text = (
+            '00:00:01.000 --> 00:00:03.000 <v Alice>First.\n'
+            '00:00:03.000 --> 00:00:05.000 <v Bob>Second.\n'
+            '00:00:05.000 --> 00:00:07.000 <v Alice>Third.\n'
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 3
+        speakers = [r["speaker_id"] for r in result]
+        assert speakers == ["Alice", "Bob", "Alice"]
+
+    def test_teams_inline_timestamps_extracted(self):
+        text = '00:01:23.456 --> 00:01:30.789 <v Alice>Test.\n'
+        result = parse_text_transcript(text)
+        assert abs(result[0]["start"] - 83.456) < 0.001
+        assert abs(result[0]["end"] - 90.789) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# parse_text_transcript — Google Meet format
+# ---------------------------------------------------------------------------
+
+class TestParseGoogleMeet:
+    def test_google_meet_basic(self):
+        text = (
+            "Sarah Chen (00:01:23)\n"
+            "Hello everyone, welcome to the meeting.\n\n"
+            "Michael Park (00:01:45)\n"
+            "Thanks for having me.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Sarah Chen"
+        assert result[0]["text"] == "Hello everyone, welcome to the meeting."
+        assert result[1]["speaker_id"] == "Michael Park"
+
+    def test_google_meet_multi_line_text(self):
+        text = (
+            "Alice (00:00:01)\n"
+            "This is the first line.\n"
+            "And this is a continuation.\n\n"
+            "Bob (00:00:10)\n"
+            "Got it.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert "first line" in result[0]["text"]
+        assert "continuation" in result[0]["text"]
+
+    def test_google_meet_short_timestamp(self):
+        text = "Alice (01:23)\nHello.\n"
+        result = parse_text_transcript(text)
+        assert result[0]["speaker_id"] == "Alice"
+        assert abs(result[0]["start"] - 83.0) < 0.001
+
+    def test_google_meet_name_with_spaces(self):
+        text = "Dr. Jane Smith (00:05:30)\nGood morning everyone.\n"
+        result = parse_text_transcript(text)
+        assert result[0]["speaker_id"] == "Dr. Jane Smith"
+
+
+# ---------------------------------------------------------------------------
+# parse_text_transcript — Zoom TXT formats
+# ---------------------------------------------------------------------------
+
+class TestParseZoomTXT:
+    def test_zoom_bracket_format(self):
+        text = (
+            "Sarah: [00:00:03] Hello everyone.\n"
+            "Michael: [00:00:07] Thanks for joining.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Sarah"
+        assert result[0]["text"] == "Hello everyone."
+        assert result[1]["speaker_id"] == "Michael"
+
+    def test_zoom_bracket_timestamps_extracted(self):
+        text = "Sarah: [00:01:30] Testing timestamps.\n"
+        result = parse_text_transcript(text)
+        assert abs(result[0]["start"] - 90.0) < 0.001
+
+    def test_zoom_leading_timestamp(self):
+        text = (
+            "00:00:03 Sarah: Hello everyone.\n"
+            "00:00:07 Michael: Thanks for joining.\n"
+        )
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Sarah"
+        assert result[1]["speaker_id"] == "Michael"
+
+    def test_zoom_leading_timestamps_extracted(self):
+        text = "00:01:30 Sarah: Testing timestamps.\n"
+        result = parse_text_transcript(text)
+        assert abs(result[0]["start"] - 90.0) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# parse_text_transcript — BOM handling
+# ---------------------------------------------------------------------------
+
+class TestBOMHandling:
+    def test_bom_prefix_stripped(self):
+        text = "\ufeffAlice: Hello.\nBob: Hi."
+        result = parse_text_transcript(text)
+        assert len(result) == 2
+        assert result[0]["speaker_id"] == "Alice"
+
+
+# ---------------------------------------------------------------------------
+# is_text_transcript — new extensions
+# ---------------------------------------------------------------------------
+
+class TestIsTextTranscriptNewExtensions:
+    def test_vtt_extension(self):
+        assert is_text_transcript("meeting.vtt") is True
+
+    def test_srt_extension(self):
+        assert is_text_transcript("subtitles.srt") is True
+
+    def test_vtt_uppercase(self):
+        assert is_text_transcript("MEETING.VTT") is True
+
+    def test_srt_uppercase(self):
+        assert is_text_transcript("SUBTITLES.SRT") is True
 
 
 # ---------------------------------------------------------------------------

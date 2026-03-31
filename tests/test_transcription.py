@@ -98,6 +98,7 @@ def make_client(
     *,
     max_reconnects: int = 1,
     reconnect_delay_s: float = 0.0,
+    diarize: bool = True,
 ) -> tuple[DeepgramTranscriber, list[tuple], FakeWS]:
     """
     Create a DeepgramTranscriber with a FakeWS and a captured utterance list.
@@ -116,6 +117,7 @@ def make_client(
         on_utterance=on_utterance,
         max_reconnects=max_reconnects,
         reconnect_delay_s=reconnect_delay_s,
+        diarize=diarize,
         _connect_fn=connect_fn,
     )
     return client, utterances, ws
@@ -523,6 +525,12 @@ class TestBuildUrl:
     def test_url_includes_diarize(self):
         client, _, _ = make_client()
         assert "diarize=true" in client._build_url()
+
+    def test_url_diarize_false_when_disabled(self):
+        client, _, _ = make_client(diarize=False)
+        url = client._build_url()
+        assert "diarize=false" in url
+        assert "diarize=true" not in url
 
     def test_url_includes_interim_results(self):
         client, _, _ = make_client()

@@ -13,13 +13,14 @@ Zoom / Teams / Meet
         │
         ▼
 ScreenCaptureKit (Swift binary)
-  — captures system audio, no Zoom SDK required
-        │  named pipe
+  — captures system + mic audio, no Zoom SDK required
+        │  dual named pipes (system + mic)
         ▼
-Deepgram streaming WebSocket
-  — real-time transcription, speaker diarization
+2× Deepgram streaming WebSocket
+  — system pipe: diarized counterpart transcription
+  — mic pipe: user transcription (no diarization)
   — ~300ms speech-to-text latency
-        │  speaker-labelled utterances
+        │  speaker-labelled utterances (user / counterpart_N)
         ▼
 FastAPI backend (Python)
   ├── ELM Detector       — detects ego threat, shortcut mode, groupthink
@@ -101,7 +102,8 @@ At session end, the system computes a **Persuasion Score (0–100)** and a **Gro
 - **Pre-seeding** — paste a bio, email, or LinkedIn URL before a meeting to pre-classify a participant (LinkedIn profiles are auto-fetched)
 - **Google Calendar integration** — polls upcoming meetings, pre-loads participant context
 - **Sparring mode** — practice against an AI opponent before a high-stakes call
-- **Retro import** — process a recorded audio file after the fact for coaching analysis
+- **Retro import** — upload an audio file or text transcript (supports Zoom, Teams, Meet, VTT, SRT, Markdown, plain text) for retroactive coaching analysis
+- **Live speaker identification** — real-time name resolution for meeting participants via LLM inference + calendar roster
 - **Team sync** — AES-256 encrypted JSON export/import to share participant intelligence with teammates
 - **Session debrief** — full transcript, prompt history, Persuasion Score, Growth Score
 

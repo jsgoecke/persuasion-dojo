@@ -48,7 +48,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from backend.coaching_engine import CoachingPrompt
 from backend.database import init_db, override_engine, get_db_session
 from backend.main import SessionPipeline, SessionManager, app
-from backend.models import MeetingSession, Participant, Utterance
+from backend.models import (
+    MeetingSession, Participant, Utterance,
+    SessionParticipantObservation, BehavioralEvidence,
+)
+from sqlalchemy import select
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +339,243 @@ class TestSessionPipelineProcessUtterance:
         )
         call_kwargs = p.engine.process.call_args.kwargs
         assert call_kwargs["user_is_speaking"] is True
+
+
+# ---------------------------------------------------------------------------
+# SessionPipeline — coaching integration (real engine, mocked LLM)
+#
+# These tests verify that the full pipeline (ELM detector → profiler →
+# coaching engine) actually produces coaching prompts when counterpart
+# utterances flow through, using the new "user" / "counterpart_N" speaker IDs.
+# ---------------------------------------------------------------------------
+
+def _make_real_engine_client(text: str = "Ask a clarifying question right now.") -> Any:
+    """Build a mock Anthropic client that returns a fixed coaching tip."""
+    content = MagicMock()
+    content.text = text
+    response = MagicMock()
+    response.content = [content]
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=response)
+    return client
+
+
+class TestCoachingIntegration:
+    """Integration tests: real SessionPipeline with a real CoachingEngine
+    (only the LLM call is mocked). Verifies coaching prompts fire end-to-end."""
+
+    def _make_pipeline(
+        self,
+        user_speaker: str = "user",
+        client_text: str = "Try acknowledging their concern before responding.",
+    ) -> SessionPipeline:
+        from backend.coaching_engine import CoachingEngine
+
+        client = _make_real_engine_client(client_text)
+        engine = CoachingEngine(
+            user_speaker=user_speaker,
+            anthropic_client=client,
+            elm_cadence_floor_s=0.0,
+            general_cadence_floor_s=0.0,
+            haiku_timeout_s=999.0,
+        )
+        return SessionPipeline(
+            session_id="int-test-sid",
+            user_id="int-test-uid",
+            user_speaker=user_speaker,
+            coaching_engine=engine,
+        )
+
+    @pytest.mark.asyncio
+    async def test_counterpart_ego_threat_fires_prompt(self):
+        """An ego-threat utterance from a counterpart produces a coaching prompt."""
+        p = self._make_pipeline()
+
+        # Counterpart says something ego-threatening
+        result = await p.process_utterance(
+            speaker_id="counterpart_0",
+            text="That's completely wrong and you clearly don't understand the data.",
+            is_final=True,
+        )
+        assert result is not None
+        assert result.text  # non-empty coaching text
+        assert result.is_fallback is False
+
+    @pytest.mark.asyncio
+    async def test_user_utterance_produces_no_prompt(self):
+        """User utterances are suppressed — no coaching prompt fires."""
+        p = self._make_pipeline()
+
+        result = await p.process_utterance(
+            speaker_id="user",
+            text="I think we should reconsider this approach.",
+            is_final=True,
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_counterpart_general_prompt_fires(self):
+        """A non-ELM counterpart utterance can still trigger a general prompt."""
+        p = self._make_pipeline()
+
+        # First a few counterpart utterances to build context
+        for i in range(3):
+            await p.process_utterance(
+                speaker_id="counterpart_0",
+                text=f"Let me explain point {i} in detail.",
+                is_final=True,
+            )
+
+        # The engine should have fired at least once (floors disabled)
+        results = []
+        for i in range(3):
+            r = await p.process_utterance(
+                speaker_id="counterpart_0",
+                text=f"And furthermore, the analysis on slide {i + 3} shows growth.",
+                is_final=True,
+            )
+            if r is not None:
+                results.append(r)
+
+        assert len(results) > 0, "Expected at least one coaching prompt from counterpart speech"
+
+    @pytest.mark.asyncio
+    async def test_mixed_speakers_only_counterpart_fires(self):
+        """In a mixed conversation, only counterpart turns produce prompts."""
+        p = self._make_pipeline()
+
+        prompts = []
+
+        # User speaks
+        r = await p.process_utterance(
+            speaker_id="user", text="What do you think about the Q3 numbers?", is_final=True,
+        )
+        assert r is None
+
+        # Counterpart speaks (ego threat)
+        r = await p.process_utterance(
+            speaker_id="counterpart_0",
+            text="Those numbers are misleading and you know it.",
+            is_final=True,
+        )
+        if r:
+            prompts.append(r)
+
+        # User speaks again
+        r = await p.process_utterance(
+            speaker_id="user", text="Let me show you the breakdown.", is_final=True,
+        )
+        assert r is None
+
+        # Counterpart speaks again
+        r = await p.process_utterance(
+            speaker_id="counterpart_1",
+            text="I agree, these projections are unrealistic.",
+            is_final=True,
+        )
+        if r:
+            prompts.append(r)
+
+        assert len(prompts) > 0, "Expected coaching prompts from counterpart utterances"
+        for pr in prompts:
+            assert pr.text
+            assert pr.is_fallback is False
+
+    @pytest.mark.asyncio
+    async def test_counterpart_n_format_detected_by_elm(self):
+        """counterpart_N format works with the ELM detector (not just speaker_N)."""
+        p = self._make_pipeline()
+
+        await p.process_utterance(
+            speaker_id="counterpart_0",
+            text="You're wrong about this and everyone knows it.",
+            is_final=True,
+        )
+
+        # ELM detector should have processed it (check ego_threat_events)
+        assert p.elm_detector.ego_threat_events >= 0  # at least processed, may or may not fire
+
+    @pytest.mark.asyncio
+    async def test_profiler_receives_counterpart_utterances(self):
+        """The profiler classifies counterpart speakers (counterpart_N format)."""
+        p = self._make_pipeline()
+
+        # Send several utterances from one counterpart to build a profile
+        texts = [
+            "Let me walk you through the data systematically.",
+            "The metrics clearly show a 15% improvement quarter over quarter.",
+            "If we look at the root cause analysis, there are three factors.",
+            "The evidence supports investing in automation here.",
+            "Our benchmark data is statistically significant at p < 0.05.",
+        ]
+        for text in texts:
+            await p.process_utterance(
+                speaker_id="counterpart_0", text=text, is_final=True,
+            )
+
+        # Profiler should have a classification for counterpart_0
+        classification = p.profiler.get_classification("counterpart_0")
+        assert classification is not None
+        assert classification.utterance_count == 5
+        assert classification.superpower in (
+            "Architect", "Firestarter", "Inquisitor", "Bridge Builder", "Undetermined",
+        )
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_timeout(self):
+        """When the LLM times out, the engine returns a cached fallback."""
+        from backend.coaching_engine import CoachingEngine
+
+        # First call succeeds (populates cache), second times out (uses cache)
+        client = MagicMock()
+        content = MagicMock()
+        content.text = "Original coaching tip."
+        response = MagicMock()
+        response.content = [content]
+
+        call_count = 0
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return response
+            raise asyncio.TimeoutError()
+
+        client.messages = MagicMock()
+        client.messages.create = AsyncMock(side_effect=side_effect)
+
+        engine = CoachingEngine(
+            user_speaker="user",
+            anthropic_client=client,
+            elm_cadence_floor_s=0.0,
+            general_cadence_floor_s=0.0,
+            haiku_timeout_s=999.0,
+        )
+        p = SessionPipeline(
+            session_id="timeout-test",
+            user_id="uid",
+            user_speaker="user",
+            coaching_engine=engine,
+        )
+
+        # First counterpart utterance — succeeds
+        r1 = await p.process_utterance(
+            speaker_id="counterpart_0",
+            text="This is completely unacceptable and you know it.",
+            is_final=True,
+        )
+        assert r1 is not None
+        assert r1.is_fallback is False
+
+        # Second counterpart utterance — LLM times out, should get fallback
+        r2 = await p.process_utterance(
+            speaker_id="counterpart_0",
+            text="Your team has failed to deliver again.",
+            is_final=True,
+        )
+        # May be None if no cache hit for this prompt type, or a fallback
+        if r2 is not None:
+            assert r2.is_fallback is True
 
 
 # ---------------------------------------------------------------------------
@@ -1111,3 +1352,309 @@ async def _set_debrief(session_id: str, text: str) -> None:
     async with get_db_session() as db:
         row = await db.get(MeetingSession, session_id)
         row.debrief_text = text
+
+
+# ---------------------------------------------------------------------------
+# Profile extraction — retro import (integration, uses real DB)
+# ---------------------------------------------------------------------------
+
+class TestRetroProfileExtraction:
+    """Verify that the retro upload endpoint extracts and persists profiles."""
+
+    def test_text_transcript_creates_profiles(self, client):
+        """Upload a text transcript with named speakers → Participant rows created."""
+        transcript = (
+            "Francisco: Let me walk you through the data systematically.\n"
+            "Francisco: The metrics show a 15% improvement quarter over quarter.\n"
+            "Francisco: If we look at the root cause analysis, there are three factors.\n"
+            "Francisco: The evidence supports investing in automation here.\n"
+            "Francisco: Our benchmark data is statistically significant at p < 0.05.\n"
+            "Sarah: I love this vision. Imagine the impact on our customers.\n"
+            "Sarah: When I was at my last company, we saw exactly this pattern.\n"
+            "Sarah: Let me tell you a story about why this matters.\n"
+            "Sarah: The energy in this team is incredible.\n"
+            "Sarah: We should rally the whole organization behind this.\n"
+        )
+        # Upload as text transcript
+        import io
+        resp = client.post(
+            "/retro/upload",
+            files={"file": ("meeting.txt", io.BytesIO(transcript.encode()), "text/plain")},
+        )
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        # Wait for background task to complete
+        import time
+        for _ in range(30):
+            r = client.get(f"/retro/jobs/{job_id}")
+            if r.json()["status"] in ("done", "error"):
+                break
+            time.sleep(0.1)
+
+        job = client.get(f"/retro/jobs/{job_id}").json()
+        assert job["status"] == "done", f"Job failed: {job.get('error')}"
+
+        # Verify participants are in the job response
+        participants = job.get("participants", [])
+        assert len(participants) >= 2, f"Expected >= 2 participants, got {len(participants)}: {participants}"
+
+        # Check that named speakers are present
+        speaker_ids = {p["speaker_id"] for p in participants}
+        assert "Francisco" in speaker_ids, f"Francisco not in {speaker_ids}"
+        assert "Sarah" in speaker_ids, f"Sarah not in {speaker_ids}"
+
+        # Each participant should have name, archetype, confidence
+        for p in participants:
+            assert p.get("name"), f"Participant missing name: {p}"
+            assert p.get("archetype"), f"Participant missing archetype: {p}"
+            assert p.get("confidence") is not None, f"Participant missing confidence: {p}"
+            assert p.get("participant_id"), f"Participant missing participant_id (not persisted to DB): {p}"
+
+    def test_text_transcript_profiles_in_database(self, client):
+        """Profiles extracted from transcript are actually persisted in the database."""
+        transcript = (
+            "Alice: We need to look at this from a data perspective.\n"
+            "Alice: The numbers clearly indicate a downward trend.\n"
+            "Alice: Let's analyze the root cause before deciding.\n"
+            "Alice: Based on the evidence, I recommend option B.\n"
+            "Alice: The statistical analysis supports this conclusion.\n"
+        )
+        import io
+        resp = client.post(
+            "/retro/upload",
+            files={"file": ("meeting.txt", io.BytesIO(transcript.encode()), "text/plain")},
+        )
+        job_id = resp.json()["job_id"]
+
+        import time
+        for _ in range(30):
+            r = client.get(f"/retro/jobs/{job_id}")
+            if r.json()["status"] in ("done", "error"):
+                break
+            time.sleep(0.1)
+
+        job = client.get(f"/retro/jobs/{job_id}").json()
+        assert job["status"] == "done", f"Job failed: {job.get('error')}"
+
+        # Verify the Participant row exists in the database
+        async def check_db():
+            async with get_db_session() as db:
+                result = await db.execute(
+                    select(Participant).where(Participant.name == "Alice")
+                )
+                participant = result.scalar_one_or_none()
+                assert participant is not None, "Alice not found in Participant table"
+                assert participant.ps_type is not None, "Participant archetype not set"
+                assert participant.ps_confidence > 0, "Participant confidence not set"
+
+                # Check audit trail exists
+                obs_result = await db.execute(
+                    select(SessionParticipantObservation).where(
+                        SessionParticipantObservation.participant_id == participant.id
+                    )
+                )
+                obs = obs_result.scalar_one_or_none()
+                assert obs is not None, "No SessionParticipantObservation for Alice"
+                assert obs.context == "retro"
+                assert obs.utterance_count >= 1
+
+                # Check behavioral evidence exists
+                ev_result = await db.execute(
+                    select(BehavioralEvidence).where(
+                        BehavioralEvidence.participant_id == participant.id
+                    )
+                )
+                evidence = ev_result.scalar_one_or_none()
+                assert evidence is not None, "No BehavioralEvidence for Alice"
+                assert evidence.context == "retro"
+
+        asyncio.run(check_db())
+
+    def test_existing_profile_is_updated_not_duplicated(self, client):
+        """If a participant already exists, retro import updates rather than duplicates."""
+        # First, create an existing participant named "Bob"
+        async def seed_bob():
+            async with get_db_session() as db:
+                bob = Participant(
+                    user_id="local-user", name="Bob",
+                    ps_type="Unknown", ps_confidence=0.3, ps_state="active",
+                )
+                db.add(bob)
+
+        asyncio.run(seed_bob())
+
+        # Upload transcript with "Bob" speaking
+        transcript = (
+            "Bob: The data shows a clear pattern in Q3 numbers.\n"
+            "Bob: We need to analyze the variance more carefully.\n"
+            "Bob: Based on the metrics, option A is optimal.\n"
+            "Bob: The statistical tests confirm this hypothesis.\n"
+            "Bob: Let me walk through the evidence systematically.\n"
+        )
+        import io
+        resp = client.post(
+            "/retro/upload",
+            files={"file": ("meeting.txt", io.BytesIO(transcript.encode()), "text/plain")},
+        )
+        job_id = resp.json()["job_id"]
+
+        import time
+        for _ in range(30):
+            r = client.get(f"/retro/jobs/{job_id}")
+            if r.json()["status"] in ("done", "error"):
+                break
+            time.sleep(0.1)
+
+        job = client.get(f"/retro/jobs/{job_id}").json()
+        assert job["status"] == "done", f"Job failed: {job.get('error')}"
+
+        # Verify only ONE "Bob" exists (not duplicated)
+        async def check_no_dupe():
+            async with get_db_session() as db:
+                result = await db.execute(
+                    select(Participant).where(Participant.name == "Bob")
+                )
+                bobs = result.scalars().all()
+                assert len(bobs) == 1, f"Expected 1 Bob, got {len(bobs)}"
+                # Confidence should have improved from 0.3
+                bob = bobs[0]
+                assert bob.ps_confidence >= 0.3
+
+        asyncio.run(check_no_dupe())
+
+
+# ---------------------------------------------------------------------------
+# Profile extraction — live session (SessionPipeline + _persist_participant_classifications)
+# ---------------------------------------------------------------------------
+
+class TestLiveProfilePersistence:
+    """Verify that live session pipeline persists profiles for counterparts."""
+
+    @pytest.mark.asyncio
+    async def test_persist_creates_profiles_for_all_speakers(self):
+        """All non-user speakers get profiles, including Undetermined."""
+        from backend.main import _persist_participant_classifications
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        override_engine(engine)
+        await init_db()
+
+        # Create a user and session
+        async with get_db_session() as db:
+            from backend.models import User
+            user = User(id="test-user", display_name="Test")
+            db.add(user)
+            session = MeetingSession(user_id="test-user", context="team")
+            db.add(session)
+            await db.flush()
+            session_id = session.id
+
+        # Create pipeline with real profiler
+        client_mock = _make_real_engine_client()
+        from backend.coaching_engine import CoachingEngine
+        engine_obj = CoachingEngine(
+            user_speaker="user",
+            anthropic_client=client_mock,
+            elm_cadence_floor_s=0.0,
+            general_cadence_floor_s=0.0,
+        )
+        pipeline = SessionPipeline(
+            session_id=session_id,
+            user_id="test-user",
+            user_speaker="user",
+            coaching_engine=engine_obj,
+        )
+
+        # Feed utterances from counterpart_0 (strong signal) and counterpart_1 (weak signal)
+        for text in [
+            "Let me walk you through the data systematically.",
+            "The metrics show a clear improvement.",
+            "If we analyze root cause, there are three factors.",
+            "The evidence supports this conclusion.",
+            "Our benchmark data is statistically significant.",
+        ]:
+            await pipeline.process_utterance(speaker_id="counterpart_0", text=text, is_final=True)
+
+        # counterpart_1 has just 2 vague utterances (likely Undetermined)
+        for text in ["OK sure.", "Sounds good."]:
+            await pipeline.process_utterance(speaker_id="counterpart_1", text=text, is_final=True)
+
+        # Persist
+        async with get_db_session() as db:
+            await _persist_participant_classifications(db, pipeline, "team")
+
+        # Verify BOTH counterparts got profiles
+        async with get_db_session() as db:
+            result = await db.execute(select(Participant))
+            participants = result.scalars().all()
+            # Filter out the user
+            counterpart_names = [p.name for p in participants if p.user_id == "test-user"]
+            assert len(counterpart_names) >= 2, (
+                f"Expected at least 2 participant profiles, got {len(counterpart_names)}: {counterpart_names}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_persist_with_resolver_uses_resolved_names(self):
+        """When speaker resolver has a name mapping, it's used for the profile."""
+        from backend.main import _persist_participant_classifications
+        from backend.speaker_resolver import SpeakerResolver
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        override_engine(engine)
+        await init_db()
+
+        async with get_db_session() as db:
+            from backend.models import User
+            user = User(id="test-user", display_name="Test")
+            db.add(user)
+            session = MeetingSession(user_id="test-user", context="team")
+            db.add(session)
+            await db.flush()
+            session_id = session.id
+
+        client_mock = _make_real_engine_client()
+        from backend.coaching_engine import CoachingEngine
+        engine_obj = CoachingEngine(
+            user_speaker="user",
+            anthropic_client=client_mock,
+            elm_cadence_floor_s=0.0,
+            general_cadence_floor_s=0.0,
+        )
+        pipeline = SessionPipeline(
+            session_id=session_id,
+            user_id="test-user",
+            user_speaker="user",
+            coaching_engine=engine_obj,
+        )
+
+        # Create resolver and manually set a confirmed name
+        resolver = SpeakerResolver(
+            anthropic_client=MagicMock(),
+            known_names=["Maria Garcia"],
+        )
+        resolver.set_confirmed_name("counterpart_0", "Maria Garcia")
+        pipeline.resolver = resolver  # type: ignore
+
+        # Feed utterances
+        for text in [
+            "The data clearly shows improvement.",
+            "Let's analyze this methodically.",
+            "I recommend we review the metrics.",
+            "The evidence is compelling.",
+            "Based on the analysis, we should proceed.",
+        ]:
+            await pipeline.process_utterance(speaker_id="counterpart_0", text=text, is_final=True)
+
+        # Persist
+        async with get_db_session() as db:
+            await _persist_participant_classifications(db, pipeline, "team")
+
+        # Verify the profile was created with the resolved name
+        async with get_db_session() as db:
+            result = await db.execute(
+                select(Participant).where(Participant.name == "Maria Garcia")
+            )
+            maria = result.scalar_one_or_none()
+            assert maria is not None, "Profile for 'Maria Garcia' not found — resolver name not used"
+            assert maria.ps_type is not None

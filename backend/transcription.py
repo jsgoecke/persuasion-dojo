@@ -121,6 +121,9 @@ class DeepgramTranscriber:
         attempts.  Receives the last Exception.
     sample_rate:
         PCM sample rate in Hz (default 16 000).
+    diarize:
+        Enable Deepgram speaker diarization (default True). Set to False for
+        single-speaker streams (e.g., microphone-only) to reduce cost.
     reconnect_delay_s:
         Seconds to wait between reconnect attempts (default 1.0).
     max_reconnects:
@@ -138,6 +141,7 @@ class DeepgramTranscriber:
         on_utterance: UtteranceCallback,
         on_error: ErrorCallback | None = None,
         sample_rate: int = 16_000,
+        diarize: bool = True,
         reconnect_delay_s: float = 1.0,
         max_reconnects: int = 5,
         _connect_fn: Callable | None = None,
@@ -146,6 +150,7 @@ class DeepgramTranscriber:
         self._on_utterance = on_utterance
         self._on_error = on_error
         self._sample_rate = sample_rate
+        self._diarize = diarize
         self._reconnect_delay = reconnect_delay_s
         self._max_reconnects = max_reconnects
         self._connect_fn = _connect_fn
@@ -252,6 +257,7 @@ class DeepgramTranscriber:
     def _build_url(self) -> str:
         params = dict(_DEFAULT_PARAMS)
         params["sample_rate"] = str(self._sample_rate)
+        params["diarize"] = "true" if self._diarize else "false"
         qs = "&".join(f"{k}={v}" for k, v in params.items())
         return f"{_DEEPGRAM_URL}?{qs}"
 

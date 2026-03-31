@@ -248,9 +248,15 @@ export function RetroImportPane({ onBack, onViewSession, activeJobId, onJobIdCha
                   background: "var(--bg-card)",
                   borderRadius: 10,
                   padding: "10px 14px",
+                  borderLeft: `3px solid ${p.participant_id ? "#0EA5E9" : "var(--gold)"}`,
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 600 }}>{p.name || p.speaker_id}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 600 }}>{p.name || p.speaker_id}</span>
+                      <span style={{ fontSize: 11, color: p.participant_id ? "var(--text-tertiary)" : "var(--gold)" }}>
+                        {p.participant_id ? "profile updated" : "new profile"}
+                      </span>
+                    </div>
                     <span style={{
                       fontSize: 11,
                       fontWeight: 600,
@@ -261,11 +267,6 @@ export function RetroImportPane({ onBack, onViewSession, activeJobId, onJobIdCha
                       {p.archetype} ({Math.round(p.confidence * 100)}%)
                     </span>
                   </div>
-                  {p.participant_id && (
-                    <div style={{ fontSize: 11, color: "var(--green)", marginTop: 4 }}>
-                      Profile saved to participant database
-                    </div>
-                  )}
                 </div>
               ))}
             </div>

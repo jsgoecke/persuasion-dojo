@@ -275,7 +275,10 @@ class CoachingEngine:
         if participant:
             # Try to find the name from participants list by speaker index
             try:
-                idx = int(event.speaker_id.replace("speaker_", "")) - 1
+                if event.speaker_id.startswith("counterpart_"):
+                    idx = int(event.speaker_id.replace("counterpart_", ""))
+                else:
+                    idx = int(event.speaker_id.replace("speaker_", "")) - 1
                 if 0 <= idx < len(self._participants):
                     counterpart_name = self._participants[idx].get("name", "")
             except (ValueError, IndexError):
@@ -450,13 +453,15 @@ class CoachingEngine:
         for p in self._participants:
             if p.get("speaker_id") == speaker_id:
                 return p.get("archetype", "Unknown")
-        # Fall back to index-based matching (speaker_0 → first non-user participant, etc.)
+        # Fall back to index-based matching
         try:
-            idx = int(speaker_id.replace("speaker_", ""))
-            # speaker_0 is typically the user; counterparts start at 1
-            counterpart_idx = idx - 1 if idx > 0 else 0
-            if 0 <= counterpart_idx < len(self._participants):
-                return self._participants[counterpart_idx].get("archetype", "Unknown")
+            if speaker_id.startswith("counterpart_"):
+                idx = int(speaker_id.replace("counterpart_", ""))
+            else:
+                # Legacy speaker_N format: speaker_0 is user, counterparts start at 1
+                idx = int(speaker_id.replace("speaker_", "")) - 1
+            if 0 <= idx < len(self._participants):
+                return self._participants[idx].get("archetype", "Unknown")
         except (ValueError, IndexError):
             pass
         # Default to first participant's archetype as best guess

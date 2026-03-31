@@ -18,8 +18,8 @@ from backend.models import Participant
 # Minimum similarity ratio for fuzzy name matching
 _FUZZY_THRESHOLD = 0.85
 
-# Pattern for Deepgram-style generic speaker IDs
-_SPEAKER_N_RE = re.compile(r"^speaker_\d+$", re.IGNORECASE)
+# Patterns for generic speaker IDs that carry no identity signal
+_SPEAKER_N_RE = re.compile(r"^(speaker|counterpart)_\d+$", re.IGNORECASE)
 
 
 async def resolve_speaker(

@@ -36,7 +36,8 @@ persuasion-dojo/
 │   ├── pre_seeding.py       # Pre-meeting participant classification from free text
 │   ├── linkedin.py          # LinkedIn public profile scraper (OG meta + JSON-LD)
 │   ├── sparring.py          # AI sparring partner mode (text loop, no audio)
-│   ├── retro_import.py      # Retroactive audio file processing (Deepgram REST)
+│   ├── retro_import.py      # Retroactive audio/text transcript processing (9 formats)
+│   ├── speaker_resolver.py  # LLM-based speaker name resolution (counterpart_N → real names)
 │   ├── calendar_service.py  # Google Calendar OAuth + meeting polling
 │   ├── team_sync.py         # JSON export/import for Team Intelligence
 │   ├── models.py            # User, Participant, Session, Prompt schemas
@@ -113,7 +114,7 @@ cd frontend/overlay && npx playwright test  # Electron E2E tests
 **Test structure:**
 ```
 tests/
-├── test_main.py              # FastAPI REST + WebSocket integration (90+ tests)
+├── test_main.py              # FastAPI REST + WebSocket integration (100+ tests)
 ├── test_profiler.py          # Superpower classification, window logic, carry-forward
 ├── test_elm_detector.py      # Ego threat, shortcut mode, consensus protection
 ├── test_scoring.py           # Persuasion Score, Growth Score (pure functions)
@@ -123,6 +124,8 @@ tests/
 │                             #   silence watchdog, session-end signaling (44 tests)
 ├── test_ace_convergence.py   # ACE loop convergence over simulated multi-session
 ├── test_linkedin.py          # LinkedIn scraper: URL validation, HTML extraction
+├── test_retro_import.py      # Transcript parsing: 9 formats (VTT/SRT/Teams/Meet/Zoom/MD/JSON)
+├── test_speaker_resolver.py  # LLM-based speaker resolution, locking, WS notifications
 ├── test_database.py          # Write, read, disk-full simulation
 ├── test_calendar_service.py  # Token refresh, participant matching
 ├── test_team_sync.py         # Export, import, malformed JSON validation
@@ -131,7 +134,7 @@ tests/
     └── pre_seeding.py        # Pre-seed classification from text/email/bio inputs
 ```
 
-Run `pytest` for the full backend suite (900+ tests, ~90s).
+Run `pytest` for the full backend suite (980+ tests, ~45s).
 
 ## Target user
 

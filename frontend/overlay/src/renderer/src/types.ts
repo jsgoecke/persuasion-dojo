@@ -50,6 +50,17 @@ export type ConnectionState =
   | "reconnecting"
   | "error";
 
+/** A speaker profile detected during a live or retro session. */
+export interface DetectedProfile {
+  speaker_id: string;
+  suggested_name: string;
+  archetype: string;
+  confidence: number;
+  is_existing: boolean;
+  confirmed: boolean;
+  participant_id?: string;
+}
+
 /** High-level session lifecycle state. */
 export type SessionPhase =
   | "idle"      // No session created yet

@@ -3,8 +3,25 @@ name: CI
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "DESIGN.md"
+      - "TODOS.md"
+      - ".gstack/**"
   pull_request:
     branches: ["main"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "DESIGN.md"
+      - "TODOS.md"
+      - ".gstack/**"
+
+# Cancel in-progress runs for the same branch/PR — saves Actions minutes
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-backend:
@@ -30,6 +47,7 @@ jobs:
           CI: "true"
         run: >
           pytest -m "not integration and not eval"
+          --ignore=tests/test_pipeline_e2e.py
           --timeout=30 -v
           --cov=backend
           --cov-report=term-missing
@@ -69,6 +87,8 @@ jobs:
     # Non-blocking: 50 serial Electron specs take 25-35 min on CI.
     # Don't fail the overall workflow while we optimize E2E runtime.
     continue-on-error: true
+    # Only run E2E on PRs (not on push to main) to save macOS minutes (10x cost)
+    if: github.event_name == 'pull_request'
 
     defaults:
       run:

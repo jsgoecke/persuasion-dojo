@@ -113,14 +113,22 @@ class TestPipeCleanup:
         mode = os.stat(pipe_path).st_mode
         assert stat.S_ISFIFO(mode), "Expected FIFO, got something else"
 
-    def test_ensure_pipe_replaces_stale_pipe(self, reader, pipe_path):
-        """_ensure_pipe() removes and recreates an existing pipe (crash recovery)."""
+    def test_ensure_pipe_reuses_existing_fifo(self, reader, pipe_path):
+        """_ensure_pipe() reuses an existing FIFO (Swift writer may be attached)."""
         os.mkfifo(pipe_path)
         inode_before = os.stat(pipe_path).st_ino
         reader._ensure_pipe()
         assert os.path.exists(pipe_path)
         inode_after = os.stat(pipe_path).st_ino
-        assert inode_before != inode_after, "Pipe should be recreated to clear stale state"
+        assert inode_before == inode_after, "Existing FIFO should be reused, not recreated"
+        assert stat.S_ISFIFO(os.stat(pipe_path).st_mode)
+
+    def test_ensure_pipe_replaces_non_fifo(self, reader, pipe_path):
+        """_ensure_pipe() replaces a regular file with a FIFO."""
+        with open(pipe_path, "w") as f:
+            f.write("not a pipe")
+        reader._ensure_pipe()
+        assert os.path.exists(pipe_path)
         assert stat.S_ISFIFO(os.stat(pipe_path).st_mode)
 
 

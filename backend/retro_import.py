@@ -399,45 +399,300 @@ def _content_type_for(path: Path) -> str:
     return "audio/wav"
 
 
+# ---------------------------------------------------------------------------
+# Transcript parsing — shared helpers
+# ---------------------------------------------------------------------------
+
+def _parse_timestamp(ts: str) -> float:
+    """Convert ``HH:MM:SS.mmm``, ``HH:MM:SS,mmm``, or ``MM:SS`` to seconds."""
+    ts = ts.strip()
+    # HH:MM:SS with optional fractional part (. or , separator)
+    m = re.match(r"(\d{1,2}):(\d{2}):(\d{2})(?:[.,](\d{1,3}))?$", ts)
+    if m:
+        h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        frac = m.group(4)
+        ms = int(frac.ljust(3, "0")) if frac else 0
+        return h * 3600 + mi * 60 + s + ms / 1000
+    # MM:SS
+    m = re.match(r"(\d{1,2}):(\d{2})$", ts)
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2))
+    return 0.0
+
+
+def _first_nonblank_line(text: str) -> str:
+    """Return the first non-empty stripped line."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# VTT / SRT / Teams / Google Meet / Zoom detection patterns
+# ---------------------------------------------------------------------------
+
+_VTT_TIMESTAMP_RE = re.compile(
+    r"(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}\.\d{3})"
+)
+_VTT_VOICE_RE = re.compile(r"<v\s+([^>]+)>(.*)$")
+_SRT_TIMESTAMP_RE = re.compile(
+    r"(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2},\d{3})"
+)
+_SRT_SPEAKER_RE = re.compile(r"^-?\s*([^:]{1,60}):\s+(.+)$")
+_TEAMS_INLINE_RE = re.compile(
+    r"(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+"
+    r"<v\s+([^>]+)>(.*?)(?:</v>)?\s*$"
+)
+_GMEET_SPEAKER_RE = re.compile(r"^(.+?)\s*\((\d{1,2}:\d{2}(?::\d{2})?)\)\s*$")
+_ZOOM_BRACKET_RE = re.compile(
+    r"^([^:\[\]]{1,60}):\s+\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s+(.+)$"
+)
+_ZOOM_LEADING_TS_RE = re.compile(
+    r"^(\d{1,2}:\d{2}:\d{2})\s+([^:]{1,60}):\s+(.+)$"
+)
+
+
+def _looks_like_srt(text: str) -> bool:
+    """True if the text looks like an SRT subtitle file."""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    return (
+        len(lines) >= 2
+        and bool(re.match(r"^\d+$", lines[0]))
+        and bool(_SRT_TIMESTAMP_RE.search(lines[1]))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Format-specific parsers
+# ---------------------------------------------------------------------------
+
+def _parse_vtt(text: str) -> list[dict]:
+    """Parse a WebVTT file (Zoom, Teams, Google Meet)."""
+    blocks = re.split(r"\n\s*\n", text)
+    result: list[dict] = []
+    current_speaker = "speaker_0"
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        # Skip header, NOTE, STYLE blocks
+        if block.startswith("WEBVTT") or block.startswith("NOTE") or block.startswith("STYLE"):
+            continue
+
+        lines = block.splitlines()
+        ts_line = None
+        text_lines: list[str] = []
+
+        for line in lines:
+            line = line.strip()
+            if _VTT_TIMESTAMP_RE.search(line):
+                ts_line = line
+            elif re.match(r"^\d+$", line):
+                # Cue identifier (numeric) — skip
+                continue
+            elif line:
+                text_lines.append(line)
+
+        if not text_lines:
+            continue
+
+        # Extract timestamps
+        start, end = 0.0, 0.0
+        if ts_line:
+            m = _VTT_TIMESTAMP_RE.search(ts_line)
+            if m:
+                start = _parse_timestamp(m.group(1))
+                end = _parse_timestamp(m.group(2))
+
+        # Join text lines and extract speaker from voice tags
+        full_text = " ".join(text_lines)
+        # Remove closing </v> tags
+        full_text = re.sub(r"</v>", "", full_text).strip()
+        # Extract speaker from <v Name>
+        vm = _VTT_VOICE_RE.match(full_text)
+        if vm:
+            current_speaker = vm.group(1).strip()
+            full_text = vm.group(2).strip()
+        # Handle inline voice tags in the middle
+        full_text = re.sub(r"<v\s+[^>]+>", "", full_text).strip()
+
+        if full_text:
+            result.append({"speaker_id": current_speaker, "text": full_text, "start": start, "end": end})
+
+    return result
+
+
+def _parse_srt(text: str) -> list[dict]:
+    """Parse an SRT subtitle file."""
+    blocks = re.split(r"\n\s*\n", text)
+    result: list[dict] = []
+    current_speaker = "speaker_0"
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        lines = block.splitlines()
+        ts_line = None
+        text_lines: list[str] = []
+
+        for line in lines:
+            line = line.strip()
+            if _SRT_TIMESTAMP_RE.search(line):
+                ts_line = line
+            elif re.match(r"^\d+$", line):
+                continue  # cue number
+            elif line:
+                text_lines.append(line)
+
+        if not text_lines:
+            continue
+
+        start, end = 0.0, 0.0
+        if ts_line:
+            m = _SRT_TIMESTAMP_RE.search(ts_line)
+            if m:
+                start = _parse_timestamp(m.group(1))
+                end = _parse_timestamp(m.group(2))
+
+        full_text = " ".join(text_lines)
+        # Try to extract speaker from text
+        sm = _SRT_SPEAKER_RE.match(full_text)
+        if sm:
+            current_speaker = sm.group(1).strip()
+            full_text = sm.group(2).strip()
+
+        if full_text:
+            result.append({"speaker_id": current_speaker, "text": full_text, "start": start, "end": end})
+
+    return result
+
+
+def _parse_teams_inline_vtt(text: str) -> list[dict]:
+    """Parse Teams inline VTT (timestamp + voice tag on same line)."""
+    result: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _TEAMS_INLINE_RE.match(line)
+        if m:
+            start = _parse_timestamp(m.group(1))
+            end = _parse_timestamp(m.group(2))
+            speaker = m.group(3).strip()
+            utt_text = m.group(4).strip()
+            # Remove any trailing </v> that wasn't caught by the regex
+            utt_text = re.sub(r"</v>", "", utt_text).strip()
+            if utt_text:
+                result.append({"speaker_id": speaker, "text": utt_text, "start": start, "end": end})
+    return result
+
+
+def _parse_google_meet(text: str) -> list[dict]:
+    """Parse Google Meet transcript (``Name (HH:MM:SS)`` on its own line)."""
+    result: list[dict] = []
+    current_speaker = "speaker_0"
+    current_start = 0.0
+    text_lines: list[str] = []
+
+    def flush():
+        if text_lines:
+            full_text = " ".join(text_lines).strip()
+            if full_text:
+                result.append({
+                    "speaker_id": current_speaker,
+                    "text": full_text,
+                    "start": current_start,
+                    "end": 0.0,
+                })
+            text_lines.clear()
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _GMEET_SPEAKER_RE.match(line)
+        if m:
+            flush()
+            current_speaker = m.group(1).strip()
+            current_start = _parse_timestamp(m.group(2))
+        else:
+            text_lines.append(line)
+
+    flush()
+    return result
+
+
+def _parse_zoom_bracket(text: str) -> list[dict]:
+    """Parse Zoom TXT with bracket timestamps: ``Name: [HH:MM:SS] text``."""
+    result: list[dict] = []
+    current_speaker = "speaker_0"
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _ZOOM_BRACKET_RE.match(line)
+        if m:
+            current_speaker = m.group(1).strip()
+            start = _parse_timestamp(m.group(2))
+            utt_text = m.group(3).strip()
+            if utt_text:
+                result.append({"speaker_id": current_speaker, "text": utt_text, "start": start, "end": 0.0})
+        else:
+            # Continuation line
+            if line:
+                result.append({"speaker_id": current_speaker, "text": line, "start": 0.0, "end": 0.0})
+    return result
+
+
+def _parse_zoom_leading_ts(text: str) -> list[dict]:
+    """Parse Zoom TXT with leading timestamps: ``HH:MM:SS Name: text``."""
+    result: list[dict] = []
+    current_speaker = "speaker_0"
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _ZOOM_LEADING_TS_RE.match(line)
+        if m:
+            start = _parse_timestamp(m.group(1))
+            current_speaker = m.group(2).strip()
+            utt_text = m.group(3).strip()
+            if utt_text:
+                result.append({"speaker_id": current_speaker, "text": utt_text, "start": start, "end": 0.0})
+        else:
+            result.append({"speaker_id": current_speaker, "text": line, "start": 0.0, "end": 0.0})
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main transcript parser — auto-detects format
+# ---------------------------------------------------------------------------
+
 def parse_text_transcript(text: str) -> list[dict]:
     """
-    Parse a plain-text or JSON transcript into utterance dicts.
+    Parse a transcript into utterance dicts.
 
-    Supported input formats
-    -----------------------
-    **JSON array** (most structured):
-
-        [
-          {"speaker": "Alice", "text": "Hello everyone.", "start": 0.0, "end": 2.1},
-          {"speaker_id": "speaker_1", "text": "Thanks for joining.", "start": 2.5, "end": 5.0}
-        ]
-
-    Integer ``speaker`` values are mapped to ``"speaker_N"``; string values
-    are used verbatim as the speaker_id.  ``start``/``end`` default to 0.0 if
-    absent.
-
-    **Deepgram JSON** (``{"results": {"utterances": [...]}}``) is also accepted.
-
-    **Plain text** (one utterance per non-blank line):
-
-        Alice: Hello everyone.
-        Bob: Thanks for joining.
-        Unknown line with no colon also works — attributed to previous speaker.
-
-    Leading/trailing whitespace is stripped from both speaker and text.
-    Lines with no colon are attributed to the last seen speaker (or
-    ``"speaker_0"`` for the very first line).
+    Auto-detects format: JSON, WebVTT, SRT, Teams inline VTT,
+    Google Meet, Zoom TXT (bracket/leading timestamp), Markdown bold,
+    and plain ``Speaker: text``.
 
     Returns
     -------
     list of dicts with keys: speaker_id (str), text (str), start (float), end (float).
     Returns [] for blank input.
     """
+    # Strip BOM (Windows-exported files)
+    text = text.lstrip("\ufeff")
     text = text.strip()
     if not text:
         return []
 
-    # ── Try JSON first ──────────────────────────────────────────────────────
+    # ── JSON ───────────────────────────────────────────────────────────────
     if text.startswith(("[", "{")):
         try:
             data = json.loads(text)
@@ -470,7 +725,46 @@ def parse_text_transcript(text: str) -> list[dict]:
                 result.append({"speaker_id": speaker_id, "text": raw_text, "start": start, "end": end})
             return result
 
-    # ── Plain text: "Speaker Name: utterance text" ──────────────────────────
+    # ── WebVTT ─────────────────────────────────────────────────────────────
+    if text.startswith("WEBVTT"):
+        return _parse_vtt(text)
+
+    # ── Teams inline VTT (no WEBVTT header) ────────────────────────────────
+    first = _first_nonblank_line(text)
+    if _TEAMS_INLINE_RE.match(first):
+        return _parse_teams_inline_vtt(text)
+
+    # ── SRT ────────────────────────────────────────────────────────────────
+    if _looks_like_srt(text):
+        return _parse_srt(text)
+
+    # ── Google Meet (Name (HH:MM:SS) on its own line) ─────────────────────
+    if _GMEET_SPEAKER_RE.match(first):
+        return _parse_google_meet(text)
+
+    # ── Zoom bracket: Name: [HH:MM:SS] text ──────────────────────────────
+    if _ZOOM_BRACKET_RE.match(first):
+        return _parse_zoom_bracket(text)
+
+    # ── Zoom leading ts: HH:MM:SS Name: text ─────────────────────────────
+    if _ZOOM_LEADING_TS_RE.match(first):
+        return _parse_zoom_leading_ts(text)
+
+    # ── Plain text / Markdown bold fallback ────────────────────────────────
+    _SPEAKER_LINE = re.compile(
+        r"^"
+        r"(?:\d{1,2}:\d{2}(?::\d{2})?\s+)?"   # optional leading timestamp
+        r"\*{0,2}"                              # optional opening ** or *
+        r"([^:*\n]{1,60})"                      # speaker name (no colons, no asterisks)
+        r":\*{0,2}"                             # colon + optional closing ** or *
+        r"\s+"                                  # whitespace
+        r"(.+)$",                               # utterance text
+    )
+    _SKIP_LINE = re.compile(
+        r"^(?:#|\*\*Date|\*\*Participants|\*\*Time|\*\*Location|---|===|\[|\*\*Meeting)",
+        re.IGNORECASE,
+    )
+
     lines = text.splitlines()
     result = []
     current_speaker = "speaker_0"
@@ -478,7 +772,9 @@ def parse_text_transcript(text: str) -> list[dict]:
         line = line.strip()
         if not line:
             continue
-        m = re.match(r"^([^:]{1,60}):\s+(.+)$", line)
+        if _SKIP_LINE.match(line):
+            continue
+        m = _SPEAKER_LINE.match(line)
         if m:
             current_speaker = m.group(1).strip()
             utterance_text = m.group(2).strip()
@@ -493,7 +789,7 @@ def parse_text_transcript(text: str) -> list[dict]:
     return result
 
 
-_TEXT_EXTENSIONS = {".txt", ".json", ".jsonl", ".md"}
+_TEXT_EXTENSIONS = {".txt", ".json", ".jsonl", ".md", ".vtt", ".srt"}
 
 
 def is_text_transcript(filename: str) -> bool:

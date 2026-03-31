@@ -4,7 +4,8 @@ import AVFoundation
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-let pipePath = "/tmp/persuasion_audio.pipe"
+let systemPipePath = "/tmp/persuasion_audio.pipe"
+let micPipePath = "/tmp/persuasion_mic.pipe"
 
 // ── FIFO creation ─────────────────────────────────────────────────────────
 
@@ -21,8 +22,9 @@ func createFIFO(at path: String) {
 
 signal(SIGPIPE, SIG_IGN)
 
-let pipeWriter = PipeWriter(path: pipePath)
-let mixer = AudioMixer(pipeWriter: pipeWriter)
+let systemPipeWriter = PipeWriter(path: systemPipePath)
+let micPipeWriter = PipeWriter(path: micPipePath)
+let mixer = AudioMixer(systemWriter: systemPipeWriter, micWriter: micPipeWriter)
 let capture = ScreenAudioCapture(mixer: mixer)
 let micCapture = MicCapture()
 
@@ -32,8 +34,10 @@ func handleShutdown() {
         micCapture.stop()
         await capture.stop()
         mixer.stop()
-        pipeWriter.stop()
-        Darwin.unlink(pipePath)
+        systemPipeWriter.stop()
+        micPipeWriter.stop()
+        Darwin.unlink(systemPipePath)
+        Darwin.unlink(micPipePath)
         exit(0)
     }
 }
@@ -64,9 +68,11 @@ Task {
     }
     fputs("AudioCapture: permission OK\n", stderr)
 
-    // Create FIFO and start the PipeWriter (waits for reader in background).
-    createFIFO(at: pipePath)
-    pipeWriter.start()
+    // Create FIFOs and start PipeWriters (each waits for reader in background).
+    createFIFO(at: systemPipePath)
+    createFIFO(at: micPipePath)
+    systemPipeWriter.start()
+    micPipeWriter.start()
 
     // Start the audio mixer (flushes mixed PCM to PipeWriter every 20 ms).
     mixer.start()
@@ -76,7 +82,8 @@ Task {
         try await capture.start()
     } catch {
         fputs("AudioCapture: failed to start capture: \(error)\n", stderr)
-        Darwin.unlink(pipePath)
+        Darwin.unlink(systemPipePath)
+        Darwin.unlink(micPipePath)
         exit(1)
     }
 

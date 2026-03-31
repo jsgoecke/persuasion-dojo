@@ -57,6 +57,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import stat
 import time
 from typing import Awaitable, Callable
 
@@ -193,14 +194,19 @@ class AudioPipeReader:
     # ------------------------------------------------------------------
 
     def _ensure_pipe(self) -> None:
-        """Create the named pipe, replacing any stale one from a previous crash."""
+        """Create the named pipe if it doesn't exist, or reuse an existing one.
+
+        If the FIFO already exists (created by the Swift AudioCapture binary),
+        reuse it — deleting and recreating would orphan the writer's file
+        descriptor, breaking the audio stream.
+        """
         if os.path.exists(self._pipe_path):
-            # Remove stale pipe so we get a fresh FIFO. A leftover pipe from a
-            # hard crash (SIGKILL, OOM) has no writer — the reader would block
-            # forever on open() if we reused it.
+            if stat.S_ISFIFO(os.stat(self._pipe_path).st_mode):
+                logger.info("AudioPipeReader: reusing existing FIFO %s", self._pipe_path)
+                return
+            # Not a FIFO (regular file, etc.) — remove and recreate
             try:
                 os.unlink(self._pipe_path)
-                logger.info("AudioPipeReader: removed stale pipe %s", self._pipe_path)
             except OSError:
                 pass
         try:

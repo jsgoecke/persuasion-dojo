@@ -125,7 +125,8 @@ from backend.transcription import DeepgramTranscriber
 # ---------------------------------------------------------------------------
 
 _DEFAULT_USER_ID = "local-user"        # single-user V1 app
-_DEFAULT_USER_SPEAKER = "speaker_0"    # Deepgram diarization convention
+_USER_SPEAKER_ID = "user"              # deterministic — mic pipe guarantees this
+_DEFAULT_MIC_PIPE_PATH = "/tmp/persuasion_mic.pipe"
 
 # In-memory sparring sessions (no DB persistence — text-only practice mode).
 _sparring_sessions: dict[str, SparringSession] = {}
@@ -147,7 +148,7 @@ class SessionPipeline:
         self,
         session_id: str,
         user_id: str,
-        user_speaker: str = _DEFAULT_USER_SPEAKER,
+        user_speaker: str = _USER_SPEAKER_ID,
         coaching_engine: CoachingEngine | None = None,
     ) -> None:
         self.session_id = session_id
@@ -326,8 +327,8 @@ class CreateSessionRequest(BaseModel):
     context: str = Field(default="unknown", description="Meeting context type")
     title: str | None = Field(default=None, description="Meeting title (from calendar)")
     user_speaker: str = Field(
-        default=_DEFAULT_USER_SPEAKER,
-        description="Diarization speaker ID for the coached user",
+        default=_USER_SPEAKER_ID,
+        description="Speaker ID for the coached user (always 'user' with dual-pipe audio)",
     )
     user_archetype: str | None = Field(default=None, description="User's Communicator Superpower")
     participants: list[_ParticipantInfo] = Field(default_factory=list, description="Known meeting participants")
@@ -1156,7 +1157,7 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         if row is None:
             await ws.close(code=4004, reason="Session not found")
             return
-        user_speaker = row.coaching_context or _DEFAULT_USER_SPEAKER
+        user_speaker = _USER_SPEAKER_ID
 
     await ws.accept()
 
@@ -1253,16 +1254,72 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
 
     _session_manager.register(pipeline)
 
-    # ── Audio pipeline ────────────────────────────────────────────────────
+    # ── Speaker resolver (LLM-based name mapping) ──────────────────────
+    from backend.speaker_resolver import SpeakerResolver
 
-    async def _on_utterance(
+    known_names = [p.get("name", "") for p in participants_info if p.get("name")]
+    resolver = SpeakerResolver(
+        anthropic_client=AsyncAnthropic(),
+        known_names=known_names,
+        ws_send=ws.send_json,
+    )
+    # Stash resolver on pipeline for session-end access
+    pipeline.resolver = resolver  # type: ignore[attr-defined]
+
+    # Track which speakers have been notified to the frontend as detected profiles
+    _notified_profiles: set[str] = set()
+
+    # ── Audio pipeline (dual-pipe: mic + system) ──────────────────────
+
+    async def _on_mic_utterance(
         speaker_id: str, text: str, is_final: bool, start_s: float, end_s: float
     ) -> None:
+        """Mic stream = always the user. Override speaker_id."""
         await _handle_utterance(
             ws, pipeline,
-            {"speaker_id": speaker_id, "text": text,
+            {"speaker_id": _USER_SPEAKER_ID, "text": text,
              "is_final": is_final, "start": start_s, "end": end_s},
         )
+
+    async def _on_system_utterance(
+        speaker_id: str, text: str, is_final: bool, start_s: float, end_s: float
+    ) -> None:
+        """System audio = counterparts. Prefix to distinguish from user."""
+        prefixed_id = speaker_id.replace("speaker_", "counterpart_")
+        await _handle_utterance(
+            ws, pipeline,
+            {"speaker_id": prefixed_id, "text": text,
+             "is_final": is_final, "start": start_s, "end": end_s},
+        )
+        # Feed to speaker resolver for name inference
+        if is_final and text.strip():
+            resolver.add_utterance(prefixed_id, text)
+
+        # Notify frontend when a new profile is first detected
+        if is_final and text.strip() and prefixed_id not in _notified_profiles:
+            cls = pipeline.profiler.get_classification(prefixed_id)
+            if cls and cls.confidence >= 0.3:
+                _notified_profiles.add(prefixed_id)
+                resolved_name = resolver.resolve(prefixed_id)
+                is_existing = False
+                try:
+                    from backend.identity import resolve_speaker as _resolve
+                    async with get_db_session() as _db:
+                        _existing = await _resolve(_db, _DEFAULT_USER_ID, resolved_name)
+                        is_existing = _existing is not None
+                except Exception:
+                    pass
+                try:
+                    await ws.send_json({
+                        "type": "profile_detected",
+                        "speaker_id": prefixed_id,
+                        "suggested_name": resolved_name,
+                        "archetype": cls.superpower,
+                        "confidence": round(cls.confidence, 2),
+                        "is_existing": is_existing,
+                    })
+                except Exception:
+                    pass
 
     async def _on_silence() -> None:
         """Swift binary has stopped writing — tell the renderer to restart it."""
@@ -1271,82 +1328,125 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         except Exception:
             pass  # WebSocket may already be closing
 
-    transcriber = DeepgramTranscriber(api_key=deepgram_key, on_utterance=_on_utterance)
-    transcriber_connected = False
+    # Create dual transcribers: mic (no diarization) + system (with diarization)
+    mic_transcriber = DeepgramTranscriber(
+        api_key=deepgram_key, on_utterance=_on_mic_utterance, diarize=False,
+    )
+    system_transcriber = DeepgramTranscriber(
+        api_key=deepgram_key, on_utterance=_on_system_utterance, diarize=True,
+    )
+    mic_transcriber_connected = False
+    system_transcriber_connected = False
 
-    # Audio level metering — send RMS to frontend every ~250 ms
+    # Audio level metering — send RMS to frontend every ~250 ms (from mic stream)
     _level_accum: list[int] = []         # raw Int16 sample squares
     _level_sample_count: list[int] = [0] # mutable counter in closure
     _LEVEL_INTERVAL_SAMPLES = 16_000 // 4  # 250 ms at 16 kHz
 
-    _deepgram_error_sent = False
-    _deepgram_retry_after: float = 0.0  # monotonic time before which we skip reconnect
+    _mic_dg_error_sent = False
+    _mic_dg_retry_after: float = 0.0
+    _sys_dg_error_sent = False
+    _sys_dg_retry_after: float = 0.0
 
-    async def _on_audio_chunk(data: bytes) -> None:
-        """Forward audio to Deepgram, connecting lazily on first chunk."""
-        nonlocal transcriber_connected, _deepgram_error_sent, _deepgram_retry_after
+    def _make_audio_chunk_handler(
+        transcriber: DeepgramTranscriber,
+        label: str,
+        is_mic: bool,
+    ):
+        """Factory for per-pipe audio chunk handlers with lazy Deepgram connect."""
+        _connected = [False]
+        _error_sent = [False]
+        _retry_after = [0.0]
 
-        # ── Audio level meter (always runs, even if Deepgram is down) ──────
-        import struct as _struct, math as _math
-        n_samples = len(data) // 2
-        if n_samples > 0:
-            try:
-                samples = _struct.unpack(f"<{n_samples}h", data[:n_samples * 2])
-                _level_accum.extend(s * s for s in samples)
-                _level_sample_count[0] += n_samples
-                if _level_sample_count[0] >= _LEVEL_INTERVAL_SAMPLES:
-                    rms = _math.sqrt(sum(_level_accum) / len(_level_accum)) if _level_accum else 0
-                    level = min(rms / 32767.0, 1.0)
-                    _level_accum.clear()
-                    _level_sample_count[0] = 0
+        async def _on_audio_chunk(data: bytes) -> None:
+            # ── Audio level meter (mic stream only) ──────
+            if is_mic:
+                import struct as _struct, math as _math
+                n_samples = len(data) // 2
+                if n_samples > 0:
                     try:
-                        await ws.send_json({"type": "audio_level", "level": round(level, 4)})
+                        samples = _struct.unpack(f"<{n_samples}h", data[:n_samples * 2])
+                        _level_accum.extend(s * s for s in samples)
+                        _level_sample_count[0] += n_samples
+                        if _level_sample_count[0] >= _LEVEL_INTERVAL_SAMPLES:
+                            rms = _math.sqrt(sum(_level_accum) / len(_level_accum)) if _level_accum else 0
+                            level = min(rms / 32767.0, 1.0)
+                            _level_accum.clear()
+                            _level_sample_count[0] = 0
+                            try:
+                                await ws.send_json({"type": "audio_level", "level": round(level, 4)})
+                            except Exception:
+                                pass
+                    except _struct.error:
+                        pass
+
+            # ── Deepgram streaming ─────────────────────────────────────
+            if not _connected[0] or not transcriber.is_connected:
+                if time.monotonic() < _retry_after[0]:
+                    return
+                if _connected[0]:
+                    logger.warning("Deepgram %s connection lost, reconnecting…", label)
+                    try:
+                        await transcriber.disconnect()
                     except Exception:
                         pass
-            except _struct.error:
-                pass
-
-        # ── Deepgram streaming ─────────────────────────────────────────────
-        if not transcriber_connected or not transcriber.is_connected:
-            # Backoff: don't retry Deepgram more than once every 10 seconds
-            if time.monotonic() < _deepgram_retry_after:
-                return
-            if transcriber_connected:
-                # Was connected but Deepgram dropped — reconnect
-                logger.warning("Deepgram connection lost, reconnecting…")
+                    _connected[0] = False
                 try:
-                    await transcriber.disconnect()
-                except Exception:
-                    pass
-                transcriber_connected = False
-            try:
-                await transcriber.connect()
-                transcriber_connected = True
-                _deepgram_error_sent = False
-                _deepgram_retry_after = 0.0
-                logger.info("Deepgram connected on first audio chunk")
-            except Exception as exc:
-                logger.error("Deepgram connect failed: %s", exc)
-                _deepgram_retry_after = time.monotonic() + 10.0
-                if not _deepgram_error_sent:
-                    _deepgram_error_sent = True
-                    try:
-                        await ws.send_json({
-                            "type": "no_audio",
-                            "message": f"Transcription failed: {exc}. Check your Deepgram API key in Settings.",
-                        })
-                    except Exception:
-                        pass
-                return
-        await transcriber.send_audio(data)
+                    await transcriber.connect()
+                    _connected[0] = True
+                    _error_sent[0] = False
+                    _retry_after[0] = 0.0
+                    logger.info("Deepgram %s connected on first audio chunk", label)
+                except Exception as exc:
+                    logger.error("Deepgram %s connect failed: %s", label, exc)
+                    _retry_after[0] = time.monotonic() + 10.0
+                    if not _error_sent[0]:
+                        _error_sent[0] = True
+                        try:
+                            await ws.send_json({
+                                "type": "no_audio",
+                                "message": f"Transcription ({label}) failed: {exc}. Check your Deepgram API key in Settings.",
+                            })
+                        except Exception:
+                            pass
+                    return
+            await transcriber.send_audio(data)
 
-    audio_reader = AudioPipeReader(
-        on_audio_chunk=_on_audio_chunk,
+        return _on_audio_chunk
+
+    _on_mic_chunk = _make_audio_chunk_handler(mic_transcriber, "mic", is_mic=True)
+    _on_system_chunk = _make_audio_chunk_handler(system_transcriber, "system", is_mic=False)
+
+    # Dual readers: mic pipe (no silence watchdog) + system pipe (with watchdog)
+    system_reader = AudioPipeReader(
+        on_audio_chunk=_on_system_chunk,
         on_silence_timeout=_on_silence,
     )
+    mic_reader: AudioPipeReader | None = None
+    _dual_pipe_mode = os.path.exists(_DEFAULT_MIC_PIPE_PATH)
+
+    if _dual_pipe_mode:
+        mic_reader = AudioPipeReader(
+            pipe_path=_DEFAULT_MIC_PIPE_PATH,
+            on_audio_chunk=_on_mic_chunk,
+            on_silence_timeout=None,  # Mic silence is normal (user muted)
+        )
 
     try:
-        await audio_reader.start()
+        if mic_reader:
+            # Start both readers concurrently
+            await asyncio.gather(
+                system_reader.start(),
+                mic_reader.start(),
+            )
+        else:
+            # Fallback: single-pipe mode (old Swift binary)
+            logger.warning(
+                "Mic pipe not found at %s — using single-pipe mode. "
+                "Update AudioCapture binary for accurate speaker identification.",
+                _DEFAULT_MIC_PIPE_PATH,
+            )
+            await system_reader.start()
     except Exception as exc:
         await ws.send_json({
             "type": "error",
@@ -1356,10 +1456,13 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         _session_manager.remove(session_id)
         return
 
+    # Start the speaker resolver background loop
+    await resolver.start()
+
     async def _check_audio_started() -> None:
         """Send a warning if no audio arrives within the first 5 seconds."""
         await asyncio.sleep(5.0)
-        if audio_reader.last_audio_time == 0.0:
+        if system_reader.last_audio_time == 0.0:
             try:
                 await ws.send_json({
                     "type": "no_audio",
@@ -1391,8 +1494,12 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        await audio_reader.stop()
-        await transcriber.disconnect()
+        await system_reader.stop()
+        if mic_reader:
+            await mic_reader.stop()
+        await system_transcriber.disconnect()
+        await mic_transcriber.disconnect()
+        await resolver.stop()
         _session_manager.remove(session_id)
 
 
@@ -1418,6 +1525,15 @@ async def _handle_message(
     elif msg_type == "session_end":
         await _handle_session_end(ws, pipeline)
         return True
+
+    elif msg_type == "confirm_profile":
+        speaker_id = msg.get("speaker_id", "")
+        name = msg.get("name", "")
+        if speaker_id and name:
+            # Lock the name in the resolver so it won't change
+            _resolver = getattr(pipeline, "resolver", None)
+            if _resolver:
+                _resolver.set_confirmed_name(speaker_id, name)
 
     else:
         await ws.send_json(
@@ -1547,14 +1663,22 @@ async def _persist_participant_classifications(
     for speaker_id, classification in all_cls.items():
         if speaker_id == pipeline.user_speaker:
             continue
-        if classification.superpower == "Undetermined":
-            continue
 
         # Determine display name
         name = ""
-        if participants_info:
+        # Check if resolver has a confirmed/inferred name
+        if hasattr(pipeline, "resolver") and pipeline.resolver:
+            resolved = pipeline.resolver.resolve(speaker_id)
+            if resolved != speaker_id:
+                name = resolved
+        # Fall back to positional index from participants_info
+        if not name and participants_info:
             try:
-                idx = int(speaker_id.replace("speaker_", "")) - 1
+                # Support both counterpart_N and speaker_N formats
+                if speaker_id.startswith("counterpart_"):
+                    idx = int(speaker_id.replace("counterpart_", ""))
+                else:
+                    idx = int(speaker_id.replace("speaker_", "")) - 1
             except ValueError:
                 idx = -1
             if 0 <= idx < len(participants_info):
@@ -1564,12 +1688,13 @@ async def _persist_participant_classifications(
             name = speaker_id
 
         # Resolve identity — fuzzy match against existing profiles
+        archetype = classification.superpower if classification.superpower != "Undetermined" else "Unknown"
         participant = await resolve_speaker(db, pipeline.user_id, name)
         if participant is None:
             participant = Participant(
                 user_id=pipeline.user_id, name=name,
-                ps_type=classification.superpower,
-                ps_confidence=0.5,
+                ps_type=archetype,
+                ps_confidence=classification.confidence,
                 ps_state="active",
             )
             db.add(participant)
@@ -2451,7 +2576,7 @@ async def retro_upload(
                             text=utt["text"],
                             start_s=float(utt.get("start", 0.0)),
                             end_s=float(utt.get("end", 0.0)),
-                            is_user=(utt["speaker_id"] == _DEFAULT_USER_SPEAKER),
+                            is_user=(utt["speaker_id"] == _USER_SPEAKER_ID),
                         ))
                     # Compute persuasion score
                     score_utterances = [
@@ -2460,7 +2585,7 @@ async def retro_upload(
                         for u in utterances
                     ]
                     if score_utterances:
-                        result = compute_persuasion_score(score_utterances, _DEFAULT_USER_SPEAKER)
+                        result = compute_persuasion_score(score_utterances, _USER_SPEAKER_ID)
                         row.persuasion_score = result.score
                         scores = {
                             "persuasion_score": result.score,
@@ -2553,7 +2678,7 @@ async def retro_upload(
                             key_ev = profiler.get_key_evidence(sid, top_n=3)
 
                             # Run ELM detection on this speaker's utterances
-                            _elm = ELMDetector(user_speaker=_DEFAULT_USER_SPEAKER)
+                            _elm = ELMDetector(user_speaker=_USER_SPEAKER_ID)
                             for _eu in utterances:
                                 _elm.process_utterance(_eu["speaker_id"], _eu["text"])
                             elm_eps = _elm.get_episode_history(sid)
@@ -2646,7 +2771,7 @@ async def _generate_retro_debrief(
     # Build full transcript (up to 60 utterances for richer analysis)
     sample = utterances[-60:]
     transcript_lines = "\n".join(
-        f"{'[YOU]' if u['speaker_id'] == _DEFAULT_USER_SPEAKER else u['speaker_id']}: {u['text'][:200]}"
+        f"{'[YOU]' if u['speaker_id'] == _USER_SPEAKER_ID else u['speaker_id']}: {u['text'][:200]}"
         for u in sample
     )
     score_summary = (
@@ -2666,7 +2791,7 @@ async def _generate_retro_debrief(
 
     # Identify unique speakers
     speakers = set(u["speaker_id"] for u in utterances)
-    non_user_speakers = speakers - {_DEFAULT_USER_SPEAKER}
+    non_user_speakers = speakers - {_USER_SPEAKER_ID}
 
     prompt = (
         "You are a $500/hr executive communication coach who specializes in "

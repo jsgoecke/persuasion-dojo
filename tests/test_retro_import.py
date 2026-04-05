@@ -1357,3 +1357,198 @@ class TestProcessUtterances:
         assert received[0]["speaker_id"] == "speaker_0"
         assert received[0]["start"] == 0.0
         assert received[0]["end"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Speaker name validation (is_plausible_speaker_name)
+# ---------------------------------------------------------------------------
+
+from backend.identity import is_plausible_speaker_name
+
+
+class TestIsPlausibleSpeakerName:
+    """Tests for the name validation gatekeeper."""
+
+    # --- Valid names ---
+
+    def test_simple_first_name(self):
+        assert is_plausible_speaker_name("Sarah") is True
+
+    def test_first_and_last(self):
+        assert is_plausible_speaker_name("Sarah Chen") is True
+
+    def test_three_part_name(self):
+        assert is_plausible_speaker_name("María José García") is True
+
+    def test_hyphenated_name(self):
+        assert is_plausible_speaker_name("Jean-Pierre") is True
+
+    def test_name_with_apostrophe(self):
+        assert is_plausible_speaker_name("O'Brien") is True
+
+    def test_name_with_title(self):
+        assert is_plausible_speaker_name("Dr. Smith") is True
+
+    def test_short_name(self):
+        assert is_plausible_speaker_name("Li") is True
+
+    def test_name_with_accents(self):
+        assert is_plausible_speaker_name("André") is True
+
+    # --- Invalid: system/technical terms ---
+
+    def test_kill_switch_rejected(self):
+        assert is_plausible_speaker_name("kill switch") is False
+
+    def test_prompt_timeout_rejected(self):
+        assert is_plausible_speaker_name("prompt timeout") is False
+
+    def test_system_message_rejected(self):
+        assert is_plausible_speaker_name("system message") is False
+
+    def test_coaching_prompt_rejected(self):
+        assert is_plausible_speaker_name("coaching prompt") is False
+
+    def test_recording_rejected(self):
+        assert is_plausible_speaker_name("recording") is False
+
+    def test_summary_rejected(self):
+        assert is_plausible_speaker_name("summary") is False
+
+    def test_action_items_rejected(self):
+        assert is_plausible_speaker_name("action items") is False
+
+    # --- Invalid: generic speaker IDs ---
+
+    def test_speaker_0_rejected(self):
+        assert is_plausible_speaker_name("speaker_0") is False
+
+    def test_counterpart_1_rejected(self):
+        assert is_plausible_speaker_name("counterpart_1") is False
+
+    # --- Invalid: format artifacts ---
+
+    def test_webvtt_rejected(self):
+        assert is_plausible_speaker_name("WEBVTT") is False
+
+    def test_empty_rejected(self):
+        assert is_plausible_speaker_name("") is False
+
+    def test_whitespace_rejected(self):
+        assert is_plausible_speaker_name("   ") is False
+
+    # --- Invalid: structural patterns ---
+
+    def test_starts_with_digit_rejected(self):
+        assert is_plausible_speaker_name("00:15:30") is False
+
+    def test_contains_brackets_rejected(self):
+        assert is_plausible_speaker_name("Name [admin]") is False
+
+    def test_contains_angle_brackets_rejected(self):
+        assert is_plausible_speaker_name("<system>") is False
+
+    def test_too_long_rejected(self):
+        assert is_plausible_speaker_name("A" * 61) is False
+
+    def test_single_char_rejected(self):
+        assert is_plausible_speaker_name("X") is False
+
+    def test_all_caps_long_word_rejected(self):
+        assert is_plausible_speaker_name("TRANSCRIPT") is False
+
+    def test_sentence_rejected(self):
+        assert is_plausible_speaker_name("the meeting was about design") is False
+
+    def test_too_many_words_rejected(self):
+        assert is_plausible_speaker_name("one two three four five six") is False
+
+    # --- Edge cases ---
+
+    def test_blocklist_case_insensitive(self):
+        assert is_plausible_speaker_name("Kill Switch") is False
+        assert is_plausible_speaker_name("PROMPT TIMEOUT") is False
+
+    def test_unknown_rejected(self):
+        assert is_plausible_speaker_name("Unknown") is False
+
+    def test_moderator_rejected(self):
+        assert is_plausible_speaker_name("Moderator") is False
+
+    def test_host_rejected(self):
+        assert is_plausible_speaker_name("Host") is False
+
+
+# ---------------------------------------------------------------------------
+# Speaker ID sanitization in parse_text_transcript
+# ---------------------------------------------------------------------------
+
+class TestSpeakerSanitization:
+    """Garbage speaker names get replaced with speaker_N."""
+
+    def test_garbage_name_replaced_in_plain_text(self):
+        text = "kill switch: The audio was cut off.\nSarah: Got it."
+        result = parse_text_transcript(text)
+        # "kill switch" is not a name, should become speaker_0
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[0]["text"] == "The audio was cut off."
+        # "Sarah" is a real name, kept as-is
+        assert result[1]["speaker_id"] == "Sarah"
+        assert result[1]["text"] == "Got it."
+
+    def test_prompt_timeout_replaced(self):
+        text = "prompt timeout: something happened\nAlice: Let's continue."
+        result = parse_text_transcript(text)
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[1]["speaker_id"] == "Alice"
+
+    def test_multiple_garbage_get_different_ids(self):
+        text = "system: First message.\nerror: Second message.\nBob: Real talk."
+        result = parse_text_transcript(text)
+        # Both "system" and "error" are garbage, get sequential speaker_N
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[1]["speaker_id"] == "speaker_1"
+        assert result[2]["speaker_id"] == "Bob"
+
+    def test_real_names_preserved(self):
+        text = "Alice: Hello.\nBob: Hi.\nCharlie: Hey."
+        result = parse_text_transcript(text)
+        assert result[0]["speaker_id"] == "Alice"
+        assert result[1]["speaker_id"] == "Bob"
+        assert result[2]["speaker_id"] == "Charlie"
+
+    def test_srt_garbage_speaker_replaced(self):
+        text = "1\n00:00:01,000 --> 00:00:05,000\nrecording: This is a test.\n\n2\n00:00:06,000 --> 00:00:10,000\nAlice: Hello."
+        result = parse_text_transcript(text)
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[1]["speaker_id"] == "Alice"
+
+    def test_zoom_bracket_garbage_replaced(self):
+        text = "system message: [00:01:30] Audio started.\nSarah Chen: [00:01:35] Thanks everyone."
+        result = parse_text_transcript(text)
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[1]["speaker_id"] == "Sarah Chen"
+
+    def test_json_garbage_speaker_replaced(self):
+        import json
+        data = [
+            {"speaker_id": "kill switch", "text": "Audio cut.", "start": 0.0, "end": 1.0},
+            {"speaker_id": "Alice", "text": "Hello.", "start": 1.0, "end": 2.0},
+        ]
+        result = parse_text_transcript(json.dumps(data))
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[1]["speaker_id"] == "Alice"
+
+    def test_same_garbage_gets_same_id(self):
+        text = "system: First line.\nAlice: Middle.\nsystem: Second line."
+        result = parse_text_transcript(text)
+        # Both "system" utterances should get the same speaker_0
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[2]["speaker_id"] == "speaker_0"
+
+    def test_continuation_after_garbage_inherits_sanitized_id(self):
+        text = "recording: First line.\nContinuation line."
+        result = parse_text_transcript(text)
+        # "recording" becomes speaker_0, continuation inherits it
+        assert result[0]["speaker_id"] == "speaker_0"
+        assert result[1]["speaker_id"] == "speaker_0"

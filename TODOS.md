@@ -70,6 +70,30 @@ Deferred work captured from /plan-ceo-review (2026-03-25, SCOPE EXPANSION mode) 
 
 ---
 
+## P1 — Situational Flexibility Follow-ups
+
+### Wire convergence:uptake skill key to BKT
+**What:** `classify_skill_opportunity()` currently doesn't emit `convergence:uptake` observations. Convergence signals come from `signals.py` (different code path than coaching prompts). Wire the convergence signal results into BKT at session end so this skill key can track mastery.
+**Priority:** P1
+**Context:** Identified during /ship pre-landing review (2026-03-31). The skill key exists in SKILL_KEYS but never receives BKT observations, so P(know) stays at 0.1 prior forever.
+
+### Wire BKT session-end integration (Phase 3C)
+**What:** `SkillMastery` model and pure functions (`classify_skill_opportunity`, `bkt_update`) exist but are never called from `main.py`. Need to add session-end code that: (1) iterates prompt effectiveness scores, (2) calls `classify_skill_opportunity()` for each, (3) calls `bkt_update()`, (4) creates/updates `SkillMastery` rows in the database. Without this, the BKT system has no memory across sessions and the `skill_mastery` table stays empty.
+**Priority:** P1
+**Context:** Identified during adversarial review of feat/situational-flexibility (2026-03-31). Phase 3C was planned but not implemented.
+
+### Wire BKT into non-ELM bullet selection
+**What:** `relevance_score()` in `coaching_bullets.py` only applies BKT weighting when `bullet.elm_state` is set. This means 3 of 5 skill keys (`pairing:archetype_match`, `timing:talk_ratio`, `convergence:uptake`) never affect bullet selection even after BKT session-end integration is wired. Need to map bullets to skill keys by more than just `elm_state`.
+**Priority:** P1
+**Context:** Identified during adversarial review of feat/situational-flexibility (2026-03-31).
+
+### Debrief UI for flexibility data
+**What:** Flexibility Score, CAPS signature, and per-participant convergence are computed but invisible to users. Need debrief view panels to surface this data.
+**Priority:** P1
+**Context:** Identified in CEO review finding #3. All the data is computed and stored, but there's no frontend to show it.
+
+---
+
 ## Deferred from CEO Plan (previously identified)
 
 - **Zoom SDK integration** — ScreenCaptureKit covers all platforms without it

@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import re
 import string
 from datetime import datetime, timezone
@@ -55,6 +56,11 @@ _W_CONTEXT_MISMATCH = -0.2
 _W_CATEGORY_EFFECTIVE = 0.5
 _W_CATEGORY_INEFFECTIVE = 0.3
 _RECENCY_DAYS = 30
+
+# BKT-aware weights (Phase 3)
+_W_SKILL_MASTERED = -2.0   # Penalize bullets for mastered skills (P(know) > 0.85)
+_W_SKILL_LEARNING = 1.5    # Bonus for skills in zone of proximal development (P(know) 0.3–0.7)
+_W_THOMPSON = 2.0          # Scale Thompson [0,1] to match deterministic score magnitude
 
 # Effectiveness thresholds for feedback
 _EFF_HELPFUL_THRESHOLD = 0.6
@@ -100,8 +106,15 @@ def relevance_score(
     elm_state: str | None = None,
     context: str | None = None,
     now: datetime | None = None,
+    skill_mastery: dict[str, float] | None = None,
 ) -> float:
-    """Score a bullet for relevance to the current coaching situation."""
+    """
+    Score a bullet for relevance to the current coaching situation.
+
+    skill_mastery: optional dict of skill_key → P(know). When provided,
+    applies BKT-aware weighting: mastered skills get penalized, skills in
+    the zone of proximal development get a bonus.
+    """
     now = now or datetime.now(timezone.utc)
     score = 0.0
 
@@ -144,7 +157,76 @@ def relevance_score(
     days_old = max(0, (now - updated).days)
     score += max(0.0, 1.0 - days_old / _RECENCY_DAYS)
 
+    # BKT skill mastery weighting
+    if skill_mastery and bullet.elm_state:
+        # Map bullet's elm_state to skill key
+        skill_key = bullet.elm_state if bullet.elm_state in skill_mastery else None
+        if skill_key:
+            p_know = skill_mastery[skill_key]
+            if p_know > 0.85:
+                score += _W_SKILL_MASTERED
+            elif 0.3 <= p_know <= 0.7:
+                score += _W_SKILL_LEARNING
+
     return score
+
+
+# ---------------------------------------------------------------------------
+# Thompson Sampling (Phase 4)
+# ---------------------------------------------------------------------------
+
+def thompson_sample_score(
+    helpful: int,
+    harmful: int,
+    *,
+    alpha_prior: float = 1.0,
+    beta_prior: float = 1.0,
+) -> float:
+    """
+    Draw from Beta(alpha + helpful, beta + harmful).
+
+    Returns a sample in [0, 1]. Higher helpful → samples skew higher.
+    Pure function (uses random, but deterministic for a given seed).
+    """
+    alpha = alpha_prior + helpful
+    beta_param = beta_prior + harmful
+    return random.betavariate(alpha, beta_param)
+
+
+def contextual_relevance_score(
+    bullet: CoachingBullet,
+    counterpart_archetype: str | None = None,
+    elm_state: str | None = None,
+    context: str | None = None,
+    skill_mastery: dict[str, float] | None = None,
+    now: datetime | None = None,
+    *,
+    explore: bool = True,
+) -> float:
+    """
+    Combines deterministic relevance scoring with Thompson Sampling exploration.
+
+    When explore=True:
+        score = relevance_score(...) + thompson_sample_score(helpful, harmful)
+    When explore=False:
+        score = relevance_score(...)  # identical to existing behavior
+
+    This allows the system to explore under-tested bullets while still
+    prioritizing known-good ones.
+    """
+    base = relevance_score(
+        bullet,
+        counterpart_archetype=counterpart_archetype,
+        elm_state=elm_state,
+        context=context,
+        now=now,
+        skill_mastery=skill_mastery,
+    )
+    if not explore:
+        return base
+
+    thompson = thompson_sample_score(bullet.helpful_count, bullet.harmful_count)
+    return base + _W_THOMPSON * thompson
 
 
 # ---------------------------------------------------------------------------

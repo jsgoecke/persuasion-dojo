@@ -163,9 +163,17 @@ Max tokens: 80 (≈25 words). No preamble, no labels, no quotes.
 **Archetype pairing advice:**
 The engine receives both the user's Superpower type and the counterpart's classified type. It uses cross-archetype pairing rules (e.g. "Architect speaking to Firestarter: lead with the vision before the data") to shape the action clause.
 
-### `scoring.py` — Persuasion Score + Growth Score
+### `scoring.py` — Persuasion Score + Growth Score + FlexibilityScore + BKT
 
-Pure functions, no I/O. Three components:
+Pure functions, no I/O.
+
+**FlexibilityScore** — measures how well a user adapts across contexts (TRACOM Versatility). Computed as `range × appropriateness`, where range is distribution width from M2 variance and appropriateness is fraction of contexts matching ideal archetypes (with partial credit for unknown contexts). Requires min 2 contexts, 3 sessions each.
+
+**Bayesian Knowledge Tracing (BKT)** — tracks mastery of 5 coaching skills (`elm:ego_threat`, `elm:shortcut`, `pairing:*`, `timing:talk_ratio`, `convergence:uptake`). Standard Bayesian update with conservative P(T)=0.05 learning rate.
+
+**CAPS If-Then Signatures** — maps context → archetype from `ContextProfile` data. Stability metric measures how consistent the signature is.
+
+**Persuasion Score** — three components:
 
 **Timing (30%)**
 Talk-time ratio (user words / total words).
@@ -197,6 +205,7 @@ Layer 1 — Core axes (User.core_focus / User.core_stance)
   Aggregate across ALL sessions.
   Starts from self-assessment prior (confidence ≈ 0.35).
   Converges toward behavioral evidence over ~8–10 sessions.
+  Tracks variance via Welford's M2 accumulator (core_focus_var, core_stance_var).
 
 Layer 2 — Context-stratified (ContextProfile)
   One row per (user, context): board / team / 1:1 / client / all-hands.
@@ -296,23 +305,37 @@ Processes recorded audio files (`.wav`, `.m4a`, `.mp3`) through Deepgram's REST 
 User
   id, email, display_name
   core_focus, core_stance          — Layer 1 axes (-1.0 to +1.0)
+  core_focus_var, core_stance_var  — Welford M2 accumulators (variance = M2/n)
   core_confidence                  — 0.35 → 0.95 over sessions
+  core_sessions                    — count for M2→variance conversion
   self_assessment_archetype        — prior from onboarding quiz
   total_sessions, persuasion_score_ewma, growth_score_ewma
 
 ContextProfile
   id, user_id, context             — board / team / 1:1 / client / all-hands
   focus, stance, confidence, sessions
+  focus_var, stance_var            — M2 accumulators per context
 
 Participant
   id, name, org, email
   archetype                        — persisted Superpower type
+  obs_focus_var, obs_stance_var    — M2 accumulators
   confidence, total_sessions
 
 MeetingSession
   id, user_id, name, context, started_at, ended_at
   persuasion_score, growth_delta
   obs_focus, obs_stance            — Layer 3 session observation
+
+SessionParticipantObservation
+  id, session_id, participant_id
+  convergence_score, lsm_score, pronoun_score, uptake_score
+
+SkillMastery
+  id, user_id, skill_key           — unique per (user_id, skill_key)
+  p_know, p_transit, p_guess, p_slip  — BKT parameters
+  opportunities, correct_count
+  updated_at
 
 CoachingPrompt
   id, session_id, speaker_id
@@ -469,7 +492,7 @@ Reads the full session transcript, the prompts that were generated, and any effe
 Merges delta entries into the bullet store without an LLM call. Deduplicates using a content hash (stop-word-stripped token set). Retires bullets where `harmful_count >= helpful_count + 2`. Caps the active store at 100 bullets. Fast, deterministic, crash-safe.
 
 **Selector (Python relevance scoring — <10ms)**
-Before each Haiku call, scores every active bullet for relevance to the current moment using weighted signals:
+Before each Haiku call, scores every active bullet for relevance to the current moment. Uses **Thompson Sampling** (Beta distribution draws scaled by `_W_THOMPSON=2.0`) for explore/exploit balance, plus BKT-aware penalties for mastered skills and bonuses for skills in the zone of proximal development. Weighted signals:
 
 | Signal | Weight |
 |--------|--------|
@@ -537,7 +560,7 @@ React + Vite inside Electron. The window is `always-on-top`, transparent backgro
 - `SkillBadgesPane.tsx` — growth tracking across sessions
 
 **Design system:** defined in `DESIGN.md`. Key constraints enforced in QA:
-- Overlay background: `#1C1C1E` (never pure black)
-- Layer badges: Audience `#0EA5E9` / Self `#F59E0B` / Group `#10B981`
-- Typography: Instrument Serif (debrief) + Geist (overlay) + Geist Mono (scores)
-- Window vibrancy: `hud` — never CSS `backdrop-filter: blur()`
+- App background: `#1A1A1E` (never pure black)
+- Gold accent: `#D4A853` for coaching intelligence and CTAs
+- Typography: Playfair Display (titles) + DM Sans (body/UI) + JetBrains Mono (code/scores)
+- Never use Geist, Instrument Serif, Inter, Roboto, Arial, or Helvetica

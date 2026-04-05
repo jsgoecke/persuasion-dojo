@@ -681,6 +681,10 @@ def parse_text_transcript(text: str) -> list[dict]:
     Google Meet, Zoom TXT (bracket/leading timestamp), Markdown bold,
     and plain ``Speaker: text``.
 
+    All parsed speaker IDs are validated via ``_sanitize_speaker_ids`` —
+    non-name strings (system terms, technical artifacts) are replaced with
+    numbered ``speaker_N`` labels before being returned.
+
     Returns
     -------
     list of dicts with keys: speaker_id (str), text (str), start (float), end (float).
@@ -723,32 +727,32 @@ def parse_text_transcript(text: str) -> list[dict]:
                 start = float(item.get("start", 0.0))
                 end = float(item.get("end", 0.0))
                 result.append({"speaker_id": speaker_id, "text": raw_text, "start": start, "end": end})
-            return result
+            return _sanitize_speaker_ids(result)
 
     # ── WebVTT ─────────────────────────────────────────────────────────────
     if text.startswith("WEBVTT"):
-        return _parse_vtt(text)
+        return _sanitize_speaker_ids(_parse_vtt(text))
 
     # ── Teams inline VTT (no WEBVTT header) ────────────────────────────────
     first = _first_nonblank_line(text)
     if _TEAMS_INLINE_RE.match(first):
-        return _parse_teams_inline_vtt(text)
+        return _sanitize_speaker_ids(_parse_teams_inline_vtt(text))
 
     # ── SRT ────────────────────────────────────────────────────────────────
     if _looks_like_srt(text):
-        return _parse_srt(text)
+        return _sanitize_speaker_ids(_parse_srt(text))
 
     # ── Google Meet (Name (HH:MM:SS) on its own line) ─────────────────────
     if _GMEET_SPEAKER_RE.match(first):
-        return _parse_google_meet(text)
+        return _sanitize_speaker_ids(_parse_google_meet(text))
 
     # ── Zoom bracket: Name: [HH:MM:SS] text ──────────────────────────────
     if _ZOOM_BRACKET_RE.match(first):
-        return _parse_zoom_bracket(text)
+        return _sanitize_speaker_ids(_parse_zoom_bracket(text))
 
     # ── Zoom leading ts: HH:MM:SS Name: text ─────────────────────────────
     if _ZOOM_LEADING_TS_RE.match(first):
-        return _parse_zoom_leading_ts(text)
+        return _sanitize_speaker_ids(_parse_zoom_leading_ts(text))
 
     # ── Plain text / Markdown bold fallback ────────────────────────────────
     _SPEAKER_LINE = re.compile(
@@ -786,7 +790,54 @@ def parse_text_transcript(text: str) -> list[dict]:
             "start": 0.0,
             "end": 0.0,
         })
-    return result
+    return _sanitize_speaker_ids(result)
+
+
+_GENERIC_SPEAKER_RE = re.compile(r"^(speaker|counterpart)_\d+$", re.IGNORECASE)
+
+
+def _sanitize_speaker_ids(utterances: list[dict]) -> list[dict]:
+    """
+    Post-process parsed utterances: replace non-name speaker IDs with
+    numbered speaker labels. This catches garbage that slipped through the
+    regex-based parsers (e.g. "kill switch", "prompt timeout").
+
+    Existing generic IDs (``speaker_0``, ``counterpart_1``) are kept as-is.
+    Real names are kept as-is. Everything else is replaced with ``speaker_N``.
+
+    Uses identity.is_plausible_speaker_name as the single source of truth
+    for what constitutes a valid name.
+    """
+    from backend.identity import is_plausible_speaker_name
+
+    # Build a stable mapping: original speaker_id → cleaned speaker_id
+    seen: dict[str, str] = {}
+    next_generic = 0
+
+    # Find the highest existing generic speaker index so we don't collide
+    for utt in utterances:
+        sid = utt.get("speaker_id", "")
+        m = _GENERIC_SPEAKER_RE.match(sid)
+        if m:
+            try:
+                idx = int(sid.rsplit("_", 1)[1])
+                next_generic = max(next_generic, idx + 1)
+            except (ValueError, IndexError):
+                pass
+
+    for utt in utterances:
+        sid = utt.get("speaker_id", "")
+        if sid not in seen:
+            if _GENERIC_SPEAKER_RE.match(sid):
+                seen[sid] = sid  # keep existing generic IDs
+            elif is_plausible_speaker_name(sid):
+                seen[sid] = sid  # keep real names
+            else:
+                seen[sid] = f"speaker_{next_generic}"
+                next_generic += 1
+        utt["speaker_id"] = seen[sid]
+
+    return utterances
 
 
 _TEXT_EXTENSIONS = {".txt", ".json", ".jsonl", ".md", ".vtt", ".srt"}

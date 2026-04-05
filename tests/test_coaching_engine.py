@@ -101,6 +101,8 @@ def make_snapshot(
         archetype=archetype,
         focus_score=60.0,
         stance_score=40.0,
+        focus_variance=0.0,
+        stance_variance=0.0,
         confidence=0.7,
         context=context,
         context_sessions=5,
@@ -680,3 +682,52 @@ class TestArchetypeAwareCoaching:
         await engine.process(elm_event=make_elm_event())
         user_content = client.messages.create.call_args[1]["messages"][0]["content"]
         assert "Listen actively" in user_content
+
+
+# ---------------------------------------------------------------------------
+# Flexibility-aware coaching prompts
+# ---------------------------------------------------------------------------
+
+class TestFlexibilityAwarePrompt:
+    @pytest.mark.asyncio
+    async def test_high_flex_note_included(self):
+        """High-variance user gets flexibility note in prompt."""
+        client = make_mock_client()
+        engine = make_engine(client=client, user_archetype="Firestarter")
+        # Create a snapshot with high variance
+        snapshot = make_snapshot(archetype="Firestarter", core_archetype="Inquisitor")
+        # Manually set high variance to trigger flex note
+        snapshot = ProfileSnapshot(
+            archetype="Firestarter",
+            focus_score=60.0,
+            stance_score=40.0,
+            focus_variance=800.0,
+            stance_variance=300.0,
+            confidence=0.7,
+            context="board",
+            context_sessions=5,
+            is_context_specific=True,
+            core_archetype="Inquisitor",
+            core_sessions=8,
+            context_shifts=True,
+        )
+        engine._user_snapshot = snapshot
+        prompt = await engine._general_prompt(
+            make_classification(), snapshot
+        )
+        # The prompt should contain the flex note
+        user_content = client.messages.create.call_args[1]["messages"][0]["content"]
+        assert "adapts their style" in user_content
+
+    @pytest.mark.asyncio
+    async def test_no_flex_note_for_new_user(self):
+        """New user with zero variance gets no flexibility note."""
+        client = make_mock_client()
+        engine = make_engine(client=client, user_archetype="Architect")
+        snapshot = make_snapshot()  # default variance = 0.0
+        prompt = await engine._general_prompt(
+            make_classification(), snapshot
+        )
+        user_content = client.messages.create.call_args[1]["messages"][0]["content"]
+        assert "adapts their style" not in user_content
+        assert "same style regardless" not in user_content

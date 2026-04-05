@@ -1595,6 +1595,69 @@ class TestLiveProfilePersistence:
             )
 
     @pytest.mark.asyncio
+    async def test_persist_blocks_garbage_names(self):
+        """Non-name strings like 'kill switch' must not become participants."""
+        from backend.main import _persist_participant_classifications
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        override_engine(engine)
+        await init_db()
+
+        async with get_db_session() as db:
+            from backend.models import User
+            user = User(id="test-user", display_name="Test")
+            db.add(user)
+            session = MeetingSession(user_id="test-user", context="team")
+            db.add(session)
+            await db.flush()
+            session_id = session.id
+
+        client_mock = _make_real_engine_client()
+        from backend.coaching_engine import CoachingEngine
+        engine_obj = CoachingEngine(
+            user_speaker="user",
+            anthropic_client=client_mock,
+            elm_cadence_floor_s=0.0,
+            general_cadence_floor_s=0.0,
+        )
+        pipeline = SessionPipeline(
+            session_id=session_id,
+            user_id="test-user",
+            user_speaker="user",
+            coaching_engine=engine_obj,
+        )
+
+        # Feed utterances with a garbage speaker name
+        for text in [
+            "The system has been rebooted.",
+            "Connection timed out.",
+            "Retry in 5 seconds.",
+        ]:
+            await pipeline.process_utterance(speaker_id="kill switch", text=text, is_final=True)
+
+        # Also feed a real speaker
+        for text in [
+            "Let me walk you through the data.",
+            "The metrics show improvement.",
+            "If we analyze root cause, there are three factors.",
+            "The evidence supports this.",
+            "Our benchmark data is significant.",
+        ]:
+            await pipeline.process_utterance(speaker_id="Sarah Chen", text=text, is_final=True)
+
+        async with get_db_session() as db:
+            await _persist_participant_classifications(db, pipeline, "team")
+
+        async with get_db_session() as db:
+            result = await db.execute(select(Participant))
+            participants = result.scalars().all()
+            names = [p.name for p in participants if p.user_id == "test-user"]
+            # "kill switch" must NOT be in the list
+            assert "kill switch" not in names, f"Garbage name 'kill switch' was persisted: {names}"
+            # "Sarah Chen" should be present
+            assert "Sarah Chen" in names, f"Real name 'Sarah Chen' missing from: {names}"
+
+    @pytest.mark.asyncio
     async def test_persist_with_resolver_uses_resolved_names(self):
         """When speaker resolver has a name mapping, it's used for the profile."""
         from backend.main import _persist_participant_classifications

@@ -22,6 +22,7 @@ from backend.models import (
     Participant,
     ParticipantContextProfile,
     SessionParticipantObservation,
+    m2_to_variance,
 )
 
 
@@ -70,6 +71,10 @@ class BehavioralFingerprint:
     avg_convergence: float = 0.0
     avg_uptake_ratio: float = 0.5
 
+    # Flexibility & CAPS signature (populated for participants with enough context data)
+    flexibility_score: float | None = None
+    caps_signature: dict[str, str] | None = None  # context → archetype
+
     def to_dict(self) -> dict:
         return {
             "participant_id": self.participant_id,
@@ -94,6 +99,8 @@ class BehavioralFingerprint:
             "elm_tendencies": self.elm_tendencies,
             "avg_convergence": self.avg_convergence,
             "avg_uptake_ratio": self.avg_uptake_ratio,
+            "flexibility_score": self.flexibility_score,
+            "caps_signature": self.caps_signature,
         }
 
     def coaching_summary(self, max_lines: int = 4) -> str:
@@ -106,8 +113,11 @@ class BehavioralFingerprint:
         for p in self.patterns[:2]:
             parts.append(p)
 
-        # Context shift note
-        if len(self.context_variations) > 1:
+        # Context shift note (prefer CAPS signature if available)
+        if self.caps_signature and len(self.caps_signature) > 1:
+            sig_parts = "; ".join(f"{ctx}: {arch}" for ctx, arch in self.caps_signature.items())
+            parts.append(f"style shifts by context ({sig_parts})")
+        elif len(self.context_variations) > 1:
             archetypes = {cv.archetype for cv in self.context_variations if cv.archetype}
             if len(archetypes) > 1:
                 shifts = "; ".join(
@@ -116,6 +126,9 @@ class BehavioralFingerprint:
                 )
                 if shifts:
                     parts.append(f"shifts in some contexts ({shifts})")
+
+        if self.flexibility_score is not None and self.flexibility_score > 0.3:
+            parts.append("high situational flexibility")
 
         return ". ".join(parts[:max_lines])
 
@@ -307,6 +320,28 @@ async def assemble_fingerprint(
     # Derive patterns
     patterns = _derive_patterns(evidence_rows, observations, ctx_profiles)
 
+    # Flexibility + CAPS signature for participants with enough context data
+    from backend.scoring import compute_flexibility_score, compute_caps_signature
+
+    ctx_dicts = [
+        {
+            "context": cp.context,
+            "focus_score": cp.focus_score,
+            "stance_score": cp.stance_score,
+            "sessions": cp.sessions,
+            "archetype": map_to_archetype(cp.focus_score, cp.stance_score),
+        }
+        for cp in ctx_profiles
+    ]
+    flex = compute_flexibility_score(
+        participant.obs_focus or 0.0,
+        participant.obs_stance or 0.0,
+        m2_to_variance(participant.obs_focus_var, participant.obs_sessions or 0),
+        m2_to_variance(participant.obs_stance_var, participant.obs_sessions or 0),
+        ctx_dicts,
+    )
+    caps = compute_caps_signature(ctx_dicts)
+
     return BehavioralFingerprint(
         participant_id=participant_id,
         name=participant.name,
@@ -321,4 +356,6 @@ async def assemble_fingerprint(
         elm_tendencies=elm_tendencies,
         avg_convergence=round(avg_convergence, 3),
         avg_uptake_ratio=round(avg_uptake_ratio, 3),
+        flexibility_score=flex.flexibility if flex else None,
+        caps_signature=caps.signatures if caps.signatures else None,
     )

@@ -96,6 +96,8 @@ def _user(
         archetype=archetype,  # type: ignore[arg-type]
         focus_score=focus,
         stance_score=stance,
+        focus_variance=0.0,
+        stance_variance=0.0,
         confidence=0.72,
         context=context,
         context_sessions=5,

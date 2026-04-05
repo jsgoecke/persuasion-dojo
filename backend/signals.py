@@ -624,3 +624,40 @@ def convergence_score(
     weights = [0.35, 0.25, 0.25, 0.15]
     combined = sum(r.score * w for r, w in zip(results, weights))
     return round(combined, 4), results
+
+
+_MIN_PAIR_UTTERANCES = 5  # Minimum utterances per speaker for meaningful convergence
+
+
+def per_participant_convergence(
+    utterances: list[dict],
+    user_speaker: str,
+    participant_speakers: list[str],
+    *,
+    min_utterances: int = _MIN_PAIR_UTTERANCES,
+) -> dict[str, tuple[float, list[SignalResult]]]:
+    """
+    Run convergence_score() per (user, participant) pair.
+
+    Filters utterances to only user + one participant at a time, then
+    calls the standard convergence_score(). This breaks down the aggregate
+    signal into per-counterpart scores for SessionParticipantObservation.
+
+    Returns dict mapping participant_speaker_id → (score, signal_results).
+    Pairs where either side has < min_utterances get (0.0, []).
+    """
+    results: dict[str, tuple[float, list[SignalResult]]] = {}
+    for speaker in participant_speakers:
+        pair_utts = [
+            u for u in utterances
+            if u.get("speaker") == user_speaker or u.get("speaker") == speaker
+        ]
+        # Need enough utterances from BOTH sides to compute meaningful signals
+        participant_utts = [u for u in pair_utts if u.get("speaker") == speaker]
+        user_utts = [u for u in pair_utts if u.get("speaker") == user_speaker]
+        if len(participant_utts) < min_utterances or len(user_utts) < min_utterances:
+            results[speaker] = (0.0, [])
+            continue
+        score, signals = convergence_score(pair_utts, user_speaker)
+        results[speaker] = (score, signals)
+    return results

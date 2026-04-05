@@ -14,6 +14,7 @@ for calibration via scripts/convergence_spike.py.
 import pytest
 from backend.signals import (
     language_style_matching,
+    per_participant_convergence,
     pronoun_convergence,
     uptake_ratio,
     question_type_arc,
@@ -292,3 +293,95 @@ class TestConvergenceScore:
             "uptake_ratio",
             "question_type_arc",
         }
+
+
+# ---------------------------------------------------------------------------
+# Per-participant convergence
+# ---------------------------------------------------------------------------
+
+class TestPerParticipantConvergence:
+    def test_three_speakers(self):
+        """3-person meeting: each non-user speaker gets their own convergence score."""
+        utterances = make_transcript([
+            (USER, "I think we should analyze the data before making a decision on the project.", 0.0),
+            (AUD1, "That makes sense, we need to look at our results together first.", 5.0),
+            (AUD2, "I disagree, we should just move forward with the plan now.", 10.0),
+            (USER, "Let me explain why we need data. Our team has done this before with success.", 15.0),
+            (AUD1, "Building on that, our past analysis showed great results for our team.", 20.0),
+            (AUD2, "But why would we wait? The evidence isn't compelling for our timeline.", 25.0),
+            (USER, "We need to ensure our approach is solid. The data will guide us forward.", 30.0),
+            (AUD1, "Agreed, our team should coordinate on the analysis and share findings.", 35.0),
+            (AUD2, "Fine, but what evidence do we have that this approach works for us?", 40.0),
+            (USER, "Let me walk you through our recent data. We have strong numbers.", 45.0),
+            (AUD1, "That sounds right. When should we schedule the next review?", 50.0),
+            (AUD2, "Have you considered the risks? What if the data doesn't support it?", 55.0),
+        ])
+        result = per_participant_convergence(utterances, USER, [AUD1, AUD2], min_utterances=2)
+        assert AUD1 in result
+        assert AUD2 in result
+        # Each has a score tuple: (float, list[SignalResult])
+        assert isinstance(result[AUD1][0], float)
+        assert isinstance(result[AUD2][0], float)
+
+    def test_single_participant_matches_aggregate(self):
+        """Single participant convergence should match full convergence_score."""
+        utterances = make_transcript([
+            (USER, "I think we should move forward together on this project.", 0.0),
+            (AUD1, "That makes sense for our team's goals and objectives.", 5.0),
+            (USER, "We should coordinate our resources to make this happen.", 10.0),
+            (AUD1, "Building on that, we could start next week with our plan.", 15.0),
+            (USER, "Our analysis shows strong results in the data we collected.", 20.0),
+            (AUD1, "Agreed, our approach should work well for the team.", 25.0),
+            (USER, "Let me show you what we found in our recent review.", 30.0),
+            (AUD1, "That sounds right, when should we schedule our next meeting?", 35.0),
+        ])
+        # Per-participant with single speaker should equal aggregate
+        per_part = per_participant_convergence(utterances, USER, [AUD1], min_utterances=2)
+        agg_score, _ = convergence_score(utterances, USER)
+        # Should be identical since all non-user utterances are from AUD1
+        assert per_part[AUD1][0] == agg_score
+
+    def test_insufficient_data(self):
+        """Participant with only 1 utterance gets (0.0, [])."""
+        utterances = make_transcript([
+            (USER, "We need to discuss the budget for our team.", 0.0),
+            (AUD1, "Sure, let's look at it together.", 5.0),
+            (USER, "I think we should allocate more to our research.", 10.0),
+        ])
+        result = per_participant_convergence(utterances, USER, [AUD1], min_utterances=2)
+        assert result[AUD1][0] == 0.0
+        assert result[AUD1][1] == []
+
+    def test_default_threshold_filters_sparse_pairs(self):
+        """Default min_utterances=5 filters out pairs with < 5 utterances per side."""
+        utterances = make_transcript([
+            (USER, "Let's discuss the project.", 0.0),
+            (AUD1, "Sounds good.", 5.0),
+            (USER, "We need data.", 10.0),
+            (AUD1, "Agreed.", 15.0),
+            (USER, "Let's proceed.", 20.0),
+        ])
+        # Default threshold: 5 utterances per side — AUD1 has only 2
+        result = per_participant_convergence(utterances, USER, [AUD1])
+        assert result[AUD1][0] == 0.0
+
+    def test_question_arc_single_participant(self):
+        """question_type_arc works with 1 counterpart — challenging questions resolve."""
+        utterances = make_transcript([
+            (USER, "I think we should invest in the new platform for our team.", 0.0),
+            (AUD1, "Why would we do that? What evidence do we have for this approach?", 5.0),
+            (USER, "Our data shows a strong return. Let me walk you through the numbers.", 10.0),
+            (AUD1, "Can you explain how that compares to our current system's performance?", 15.0),
+            (USER, "We ran analysis showing our new approach is faster and more reliable.", 20.0),
+            (AUD1, "How would that work in practice for our team's daily operations?", 25.0),
+            (USER, "We've tested it with our pilot group and the results are promising.", 30.0),
+            (AUD1, "That makes sense. When should we start the rollout for our team?", 35.0),
+            (USER, "We could begin next month after our planning session wraps up.", 40.0),
+            (AUD1, "Sounds right. Who should be responsible for coordinating our efforts?", 45.0),
+        ])
+        result = per_participant_convergence(utterances, USER, [AUD1], min_utterances=2)
+        score, signals = result[AUD1]
+        # Should have all 4 signals
+        assert len(signals) == 4
+        signal_names = {s.signal for s in signals}
+        assert "question_type_arc" in signal_names

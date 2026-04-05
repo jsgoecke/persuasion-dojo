@@ -61,6 +61,7 @@ _SYSTEM_PROMPT = (
 
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 80   # ~25 words (why clause + action), with headroom
+_FLEX_NOTE_ENABLED = True  # Killswitch: set False to suppress flexibility notes
 
 # Human-readable labels for ELM states used in prompts
 _ELM_STATE_DESCRIPTION: dict[str, str] = {
@@ -343,6 +344,16 @@ class CoachingEngine:
                 f"in other contexts)"
             )
 
+        # Flexibility-aware coaching note (~12 words, added to Haiku input)
+        # Descriptive (not prescriptive) — lets Haiku decide the coaching action.
+        flex_note = ""
+        if _FLEX_NOTE_ENABLED and user and (user.focus_variance + user.stance_variance) > 0:
+            total_var = user.focus_variance + user.stance_variance
+            if total_var > 500:  # high variance = genuinely flexes across contexts
+                flex_note = "This person adapts their style across different contexts."
+            elif total_var < 100 and user.core_sessions >= 5:
+                flex_note = "This person tends to use the same style regardless of context."
+
         # Build recent conversation snippet for context
         transcript_section = ""
         if recent_transcript:
@@ -397,7 +408,8 @@ class CoachingEngine:
             f"{playbook_section}"
             f"Meeting context: {context}\n"
             f"You are a {user_type}{shift_note}.\n"
-            f"Primary counterpart: {counterpart_type}\n\n"
+            + (f"{flex_note}\n" if flex_note else "")
+            + f"Primary counterpart: {counterpart_type}\n\n"
             "Read the conversation flow. What processing mode is the room in "
             "(Central Route / Peripheral Route)? Is anyone ego-threatened or "
             "checked out? Give ONE coaching tip that names the dynamic and "

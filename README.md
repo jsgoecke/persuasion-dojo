@@ -106,6 +106,9 @@ At session end, the system computes a **Persuasion Score (0–100)** and a **Gro
 - **Live speaker identification** — real-time name resolution for meeting participants via LLM inference + calendar roster
 - **Team sync** — AES-256 encrypted JSON export/import to share participant intelligence with teammates
 - **Session debrief** — full transcript, prompt history, Persuasion Score, Growth Score
+- **Flexibility Score** — tracks how well you adapt your communication style across different meeting types (board, 1:1, team, client)
+- **Per-participant convergence** — breaks down conversation alignment per counterpart, so you see which relationships are building agreement
+- **Skill mastery tracking** — Bayesian Knowledge Tracing across 5 coaching skills, replacing frequency-based badges with real learning curves
 
 ---
 

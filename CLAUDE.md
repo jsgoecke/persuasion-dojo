@@ -32,7 +32,7 @@ persuasion-dojo/
 │   ├── profiler.py          # Participant Superpower profiler (rule-based, 5-utterance window)
 │   ├── elm_detector.py      # ELM state detection (ego-threatened / shortcut / consensus)
 │   ├── coaching_engine.py   # Claude Haiku prompt generation (3-layer: self/audience/group)
-│   ├── scoring.py           # Persuasion Score + Growth Score computation (pure functions)
+│   ├── scoring.py           # Persuasion Score, Growth Score, FlexibilityScore, BKT, CAPS signatures
 │   ├── pre_seeding.py       # Pre-meeting participant classification from free text
 │   ├── linkedin.py          # LinkedIn public profile scraper (OG meta + JSON-LD)
 │   ├── sparring.py          # AI sparring partner mode (text loop, no audio)
@@ -40,7 +40,7 @@ persuasion-dojo/
 │   ├── speaker_resolver.py  # LLM-based speaker name resolution (counterpart_N → real names)
 │   ├── calendar_service.py  # Google Calendar OAuth + meeting polling
 │   ├── team_sync.py         # JSON export/import for Team Intelligence
-│   ├── models.py            # User, Participant, Session, Prompt schemas
+│   ├── models.py            # User, Participant, Session, Prompt schemas + Welford M2 variance + SkillMastery
 │   └── database.py          # SQLite via SQLAlchemy (async, WAL mode)
 ├── swift/
 │   └── AudioCapture/        # ScreenCaptureKit binary (Xcode project)
@@ -129,12 +129,13 @@ tests/
 ├── test_database.py          # Write, read, disk-full simulation
 ├── test_calendar_service.py  # Token refresh, participant matching
 ├── test_team_sync.py         # Export, import, malformed JSON validation
+├── test_bkt.py               # BKT convergence, skill opportunity classification, adversarial inputs
 └── evals/
     ├── coaching_prompts.py   # 10 fixtures: Superpower × ELM state → expected prompt properties
     └── pre_seeding.py        # Pre-seed classification from text/email/bio inputs
 ```
 
-Run `pytest` for the full backend suite (980+ tests, ~45s).
+Run `pytest` for the full backend suite (1060+ tests, ~45s).
 
 ## Target user
 
@@ -183,9 +184,8 @@ All font choices, colors, spacing, border radii, motion, and aesthetic direction
 Do not deviate without explicit user approval.
 
 Key rules (enforced in QA):
-- Overlay background must be `#1C1C1E` (never pure `#000000`)
-- Debrief background must be `#FAFAF9` (never pure `#FFFFFF`)
-- Layer badges: Audience `#0EA5E9`, Self `#F59E0B`, Group `#10B981`
-- Typography: Instrument Serif (debrief) + Geist (overlay/UI) + Geist Mono (scores)
-- Overlay window must use `vibrancy: 'hud'` — never CSS `backdrop-filter: blur()`
-- Never recommend Inter, Roboto, Arial, or Helvetica as primary fonts
+- Overlay background must be `#1A1A1E` (never pure `#000000`)
+- Typography: Playfair Display (titles) + DM Sans (body/UI) + JetBrains Mono (code/scores)
+- Never recommend Inter, Roboto, Arial, Helvetica, Geist, or Instrument Serif as fonts
+- Gold accent `#D4A853` for coaching intelligence and primary CTAs
+- See DESIGN.md for full color system, spacing, and component specs

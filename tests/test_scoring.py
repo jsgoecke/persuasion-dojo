@@ -554,3 +554,117 @@ class TestComputeSkillBadges:
         badges = compute_skill_badges(triggers)
         # Last 3 sessions have no elm:ego_threat → badge awarded
         assert "elm:ego_threat" in badges
+
+
+# ---------------------------------------------------------------------------
+# Flexibility Score
+# ---------------------------------------------------------------------------
+
+from backend.scoring import compute_flexibility_score, FlexibilityScore, CONTEXT_IDEALS
+
+
+class TestFlexibilityScore:
+    def test_high_variance_user(self):
+        """User with Firestarter in board and Inquisitor in 1:1 → range > 0."""
+        profiles = [
+            {"context": "board", "archetype": "Firestarter", "sessions": 5},
+            {"context": "1:1", "archetype": "Inquisitor", "sessions": 4},
+        ]
+        result = compute_flexibility_score(
+            core_focus=20.0, core_stance=30.0,
+            core_focus_var=1500.0, core_stance_var=800.0,
+            context_profiles=profiles,
+        )
+        assert result is not None
+        assert result.range_score > 0.0
+        assert result.flexibility >= 0.0
+
+    def test_low_variance_user(self):
+        """All contexts show the same archetype → range small."""
+        profiles = [
+            {"context": "board", "archetype": "Architect", "sessions": 5},
+            {"context": "team", "archetype": "Architect", "sessions": 4},
+        ]
+        result = compute_flexibility_score(
+            core_focus=60.0, core_stance=-40.0,
+            core_focus_var=10.0, core_stance_var=5.0,
+            context_profiles=profiles,
+        )
+        assert result is not None
+        assert result.range_score < 0.1
+
+    def test_insufficient_contexts(self):
+        """< 2 contexts → returns None."""
+        profiles = [
+            {"context": "board", "archetype": "Firestarter", "sessions": 5},
+        ]
+        result = compute_flexibility_score(
+            core_focus=20.0, core_stance=30.0,
+            core_focus_var=500.0, core_stance_var=300.0,
+            context_profiles=profiles,
+        )
+        assert result is None
+
+    def test_appropriateness_scoring(self):
+        """Context ideals mapping is respected."""
+        # Board ideal = Firestarter/Architect, 1:1 ideal = Inquisitor/Bridge Builder
+        profiles = [
+            {"context": "board", "archetype": "Firestarter", "sessions": 5},
+            {"context": "1:1", "archetype": "Inquisitor", "sessions": 4},
+        ]
+        result = compute_flexibility_score(
+            core_focus=20.0, core_stance=30.0,
+            core_focus_var=2000.0, core_stance_var=1000.0,
+            context_profiles=profiles,
+        )
+        assert result is not None
+        # Both match their ideals
+        assert result.appropriateness_score == 1.0
+
+    def test_min_sessions_per_context(self):
+        """Contexts with < min_sessions_per_context are excluded."""
+        profiles = [
+            {"context": "board", "archetype": "Firestarter", "sessions": 5},
+            {"context": "1:1", "archetype": "Inquisitor", "sessions": 1},  # too few
+        ]
+        result = compute_flexibility_score(
+            core_focus=20.0, core_stance=30.0,
+            core_focus_var=500.0, core_stance_var=300.0,
+            context_profiles=profiles,
+        )
+        # Only 1 qualified context → returns None
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# CAPS Signature
+# ---------------------------------------------------------------------------
+
+from backend.scoring import compute_caps_signature, CAPSSignature
+
+
+class TestCAPSSignature:
+    def test_multiple_contexts(self):
+        """3+ contexts with enough sessions → signature dict populated."""
+        ctx_dicts = [
+            {"context": "board", "focus_score": 60.0, "stance_score": 50.0, "sessions": 5},
+            {"context": "team", "focus_score": -40.0, "stance_score": -30.0, "sessions": 4},
+            {"context": "1:1", "focus_score": 50.0, "stance_score": 50.0, "sessions": 3},
+        ]
+        result = compute_caps_signature(ctx_dicts)
+        assert len(result.signatures) == 3
+        assert "board" in result.signatures
+        assert "team" in result.signatures
+        assert "1:1" in result.signatures
+        assert result.signature_sessions > 0
+        assert 0.0 <= result.stability <= 1.0
+
+    def test_insufficient_sessions(self):
+        """< min_sessions per context → empty signature."""
+        ctx_dicts = [
+            {"context": "board", "focus_score": 60.0, "stance_score": 50.0, "sessions": 1},
+            {"context": "team", "focus_score": -40.0, "stance_score": -30.0, "sessions": 2},
+        ]
+        result = compute_caps_signature(ctx_dicts)
+        assert result.signatures == {}
+        assert result.signature_sessions == 0

@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Table, Column, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Table, Column, Text, UniqueConstraint
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -121,6 +121,8 @@ class User(Base):
     # Positive stance = Advocacy; negative = Analysis.
     core_focus: Mapped[float] = mapped_column(Float, default=0.0)
     core_stance: Mapped[float] = mapped_column(Float, default=0.0)
+    core_focus_var: Mapped[float] = mapped_column(Float, default=0.0)
+    core_stance_var: Mapped[float] = mapped_column(Float, default=0.0)
     core_confidence: Mapped[float] = mapped_column(Float, default=SELF_ASSESSMENT_PRIOR_CONFIDENCE)
     core_sessions: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -161,6 +163,8 @@ class ContextProfile(Base):
     context: Mapped[str] = mapped_column(String(50))       # MeetingContext value
     focus_score: Mapped[float] = mapped_column(Float, default=0.0)
     stance_score: Mapped[float] = mapped_column(Float, default=0.0)
+    focus_var: Mapped[float] = mapped_column(Float, default=0.0)
+    stance_var: Mapped[float] = mapped_column(Float, default=0.0)
     sessions: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -200,6 +204,8 @@ class Participant(Base):
     # Behavioral observation (EWMA across sessions from profiler.py)
     obs_focus: Mapped[float | None] = mapped_column(Float)         # -100…+100
     obs_stance: Mapped[float | None] = mapped_column(Float)        # -100…+100
+    obs_focus_var: Mapped[float] = mapped_column(Float, default=0.0)
+    obs_stance_var: Mapped[float] = mapped_column(Float, default=0.0)
     obs_confidence: Mapped[float | None] = mapped_column(Float)
     obs_sessions: Mapped[int] = mapped_column(Integer, default=0)
     obs_archetype: Mapped[str | None] = mapped_column(String(50))  # derived from axes
@@ -227,6 +233,8 @@ class ParticipantContextProfile(Base):
     context: Mapped[str] = mapped_column(String(50))
     focus_score: Mapped[float] = mapped_column(Float, default=0.0)
     stance_score: Mapped[float] = mapped_column(Float, default=0.0)
+    focus_var: Mapped[float] = mapped_column(Float, default=0.0)
+    stance_var: Mapped[float] = mapped_column(Float, default=0.0)
     sessions: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -250,6 +258,12 @@ class SessionParticipantObservation(Base):
     archetype: Mapped[str] = mapped_column(String(50))
     utterance_count: Mapped[int] = mapped_column(Integer)
     context: Mapped[str] = mapped_column(String(50), default="unknown")
+
+    # Per-participant convergence signals (populated at session end)
+    convergence_score: Mapped[float | None] = mapped_column(Float)
+    lsm_score: Mapped[float | None] = mapped_column(Float)
+    pronoun_score: Mapped[float | None] = mapped_column(Float)
+    uptake_score: Mapped[float | None] = mapped_column(Float)
 
 
 class BehavioralEvidence(Base):
@@ -372,6 +386,49 @@ class SkillBadge(Base):
     tagline: Mapped[str] = mapped_column(String(200))          # e.g. "the skill is yours now"
     awarded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     consecutive_sessions: Mapped[int] = mapped_column(Integer, default=3)
+
+
+class SkillMastery(Base):
+    """
+    Bayesian Knowledge Tracing (BKT) per-skill mastery tracking.
+
+    Replaces frequency-decay SkillBadge logic with proper BKT.
+    One row per (user, skill_key). P(know) converges toward 1.0 as the
+    user demonstrates correct application of the skill.
+
+    Skill key taxonomy (simplified to 5 keys per CEO review):
+        elm:ego_threat, elm:shortcut, pairing:archetype_match,
+        timing:talk_ratio, convergence:uptake
+    """
+    __tablename__ = "skill_mastery"
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_key", name="uq_skill_mastery_user_skill"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    skill_key: Mapped[str] = mapped_column(String(50), index=True)
+
+    # BKT parameters
+    p_know: Mapped[float] = mapped_column(Float, default=0.1)    # P(L0) — prior knowledge
+    p_transit: Mapped[float] = mapped_column(Float, default=0.05)  # P(T) — learning rate (conservative: ~20 sessions to converge)
+    p_guess: Mapped[float] = mapped_column(Float, default=0.2)   # P(G) — lucky guess
+    p_slip: Mapped[float] = mapped_column(Float, default=0.1)    # P(S) — careless error
+
+    # Observation tracking
+    opportunities: Mapped[int] = mapped_column(Integer, default=0)
+    correct_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# Valid skill keys (simplified taxonomy per CEO review finding #3)
+SKILL_KEYS: tuple[str, ...] = (
+    "elm:ego_threat",
+    "elm:shortcut",
+    "pairing:archetype_match",
+    "timing:talk_ratio",
+    "convergence:uptake",
+)
 
 
 class MeetingSession(Base):
@@ -535,6 +592,8 @@ class ProfileSnapshot:
     archetype: SuperpowerType | Literal["Undetermined"]
     focus_score: float
     stance_score: float
+    focus_variance: float
+    stance_variance: float
     confidence: float
     context: str
     context_sessions: int
@@ -568,6 +627,42 @@ def confidence_from_sessions(n_sessions: int) -> float:
 # ---------------------------------------------------------------------------
 # Core EWMA update (pure — no I/O)
 # ---------------------------------------------------------------------------
+
+def _welford_m2_update(
+    old_m2: float,
+    old_mean: float,
+    new_mean: float,
+    new_obs: float,
+    obs_confidence: float,
+) -> float:
+    """
+    Welford's online M2 accumulator update (numerically stable).
+
+    Stores M2 (running sum of squared deviations from mean), NOT variance.
+    Variance is derived on read as: variance = M2 / n (for n >= 2).
+
+    Must be called AFTER _ewma_update so that new_mean is available.
+    If obs_confidence == 0, returns old_m2 unchanged.
+
+    The *_var fields on ORM models actually store M2 (not variance).
+    """
+    weight = max(0.0, min(1.0, obs_confidence))
+    if weight == 0.0:
+        return old_m2
+    delta_old = new_obs - old_mean
+    delta_new = new_obs - new_mean
+    # Standard Welford: M2 += (x - old_mean) * (x - new_mean)
+    # Weight attenuates low-confidence observations
+    new_m2 = old_m2 + weight * delta_old * delta_new
+    return max(0.0, round(new_m2, 4))
+
+
+def m2_to_variance(m2: float, n_sessions: int) -> float:
+    """Convert M2 accumulator to population variance. Returns 0.0 for n < 2."""
+    if n_sessions < 2:
+        return 0.0
+    return max(0.0, m2 / n_sessions)
+
 
 def _ewma_update(
     old_score: float,
@@ -615,29 +710,52 @@ def apply_session_observation(
     for committing the changes via the async session.
     """
     # ── Layer 1: update core axes ──────────────────────────────────────────
-    user.core_focus = round(
+    old_focus = user.core_focus
+    old_stance = user.core_stance
+    new_focus = round(
         _ewma_update(user.core_focus, user.core_sessions, obs.focus_score, obs.obs_confidence),
         1,
     )
-    user.core_stance = round(
+    new_stance = round(
         _ewma_update(user.core_stance, user.core_sessions, obs.stance_score, obs.obs_confidence),
         1,
     )
-    user.core_sessions += 1
+    n_after = user.core_sessions + 1
+    # M2 accumulator update AFTER EWMA (needs new_mean), BEFORE session count increments
+    user.core_focus_var = _welford_m2_update(
+        user.core_focus_var, old_focus, new_focus, obs.focus_score, obs.obs_confidence,
+    )
+    user.core_stance_var = _welford_m2_update(
+        user.core_stance_var, old_stance, new_stance, obs.stance_score, obs.obs_confidence,
+    )
+    user.core_focus = new_focus
+    user.core_stance = new_stance
+    user.core_sessions = n_after
     user.core_confidence = confidence_from_sessions(user.core_sessions)
 
     # ── Layer 2: update context-specific profile ───────────────────────────
     ctx = context_profiles.get(obs.context)
     if ctx is not None:
-        ctx.focus_score = round(
+        old_ctx_focus = ctx.focus_score
+        old_ctx_stance = ctx.stance_score
+        new_ctx_focus = round(
             _ewma_update(ctx.focus_score, ctx.sessions, obs.focus_score, obs.obs_confidence),
             1,
         )
-        ctx.stance_score = round(
+        new_ctx_stance = round(
             _ewma_update(ctx.stance_score, ctx.sessions, obs.stance_score, obs.obs_confidence),
             1,
         )
-        ctx.sessions += 1
+        n_ctx_after = ctx.sessions + 1
+        ctx.focus_var = _welford_m2_update(
+            ctx.focus_var, old_ctx_focus, new_ctx_focus, obs.focus_score, obs.obs_confidence,
+        )
+        ctx.stance_var = _welford_m2_update(
+            ctx.stance_var, old_ctx_stance, new_ctx_stance, obs.stance_score, obs.obs_confidence,
+        )
+        ctx.focus_score = new_ctx_focus
+        ctx.stance_score = new_ctx_stance
+        ctx.sessions = n_ctx_after
         ctx.updated_at = _now()
 
 
@@ -661,13 +779,23 @@ def apply_participant_observation(
     old_focus = participant.obs_focus or 0.0
     old_stance = participant.obs_stance or 0.0
 
-    participant.obs_focus = round(
+    new_focus = round(
         _ewma_update(old_focus, old_sessions, focus_score, confidence), 1
     )
-    participant.obs_stance = round(
+    new_stance = round(
         _ewma_update(old_stance, old_sessions, stance_score, confidence), 1
     )
-    participant.obs_sessions = old_sessions + 1
+    n_after = old_sessions + 1
+    # M2 accumulator update AFTER EWMA (needs new_mean)
+    participant.obs_focus_var = _welford_m2_update(
+        participant.obs_focus_var, old_focus, new_focus, focus_score, confidence,
+    )
+    participant.obs_stance_var = _welford_m2_update(
+        participant.obs_stance_var, old_stance, new_stance, stance_score, confidence,
+    )
+    participant.obs_focus = new_focus
+    participant.obs_stance = new_stance
+    participant.obs_sessions = n_after
     participant.obs_confidence = round(
         confidence_from_sessions(participant.obs_sessions), 4
     )
@@ -679,13 +807,24 @@ def apply_participant_observation(
     # Update context-specific profile
     ctx = context_profiles.get(context)
     if ctx is not None:
-        ctx.focus_score = round(
+        old_ctx_focus = ctx.focus_score
+        old_ctx_stance = ctx.stance_score
+        new_ctx_focus = round(
             _ewma_update(ctx.focus_score, ctx.sessions, focus_score, confidence), 1
         )
-        ctx.stance_score = round(
+        new_ctx_stance = round(
             _ewma_update(ctx.stance_score, ctx.sessions, stance_score, confidence), 1
         )
-        ctx.sessions += 1
+        n_ctx_after = ctx.sessions + 1
+        ctx.focus_var = _welford_m2_update(
+            ctx.focus_var, old_ctx_focus, new_ctx_focus, focus_score, confidence,
+        )
+        ctx.stance_var = _welford_m2_update(
+            ctx.stance_var, old_ctx_stance, new_ctx_stance, stance_score, confidence,
+        )
+        ctx.focus_score = new_ctx_focus
+        ctx.stance_score = new_ctx_stance
+        ctx.sessions = n_ctx_after
         ctx.updated_at = _now()
 
 
@@ -730,6 +869,8 @@ def get_profile_snapshot(
         )
         focus_score = ctx.focus_score
         stance_score = ctx.stance_score
+        focus_variance = m2_to_variance(ctx.focus_var, ctx.sessions)
+        stance_variance = m2_to_variance(ctx.stance_var, ctx.sessions)
         context_sessions = ctx.sessions
         # Confidence is the minimum of core confidence and a context-session-based value
         context_conf = confidence_from_sessions(ctx.sessions)
@@ -738,6 +879,8 @@ def get_profile_snapshot(
         archetype = core_archetype
         focus_score = user.core_focus
         stance_score = user.core_stance
+        focus_variance = m2_to_variance(user.core_focus_var, user.core_sessions)
+        stance_variance = m2_to_variance(user.core_stance_var, user.core_sessions)
         context_sessions = ctx.sessions if ctx else 0
         confidence = user.core_confidence
 
@@ -752,6 +895,8 @@ def get_profile_snapshot(
         archetype=archetype,
         focus_score=focus_score,
         stance_score=stance_score,
+        focus_variance=focus_variance,
+        stance_variance=stance_variance,
         confidence=confidence,
         context=context,
         context_sessions=context_sessions,
@@ -795,3 +940,10 @@ def seed_from_self_assessment(
     user.sa_archetype = archetype
     user.sa_confidence = round(confidence, 4)
     user.sa_completed_at = now
+
+
+# ---------------------------------------------------------------------------
+# CAPS If-Then Signature — canonical home: backend/scoring.py
+# Re-exported here for backward compatibility.
+# ---------------------------------------------------------------------------
+from backend.scoring import CAPSSignature, compute_caps_signature  # noqa: F401, E402

@@ -42,10 +42,12 @@ Disclosure (required in UI per CLAUDE.md):
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Sequence
 
 from backend.signals import convergence_score, SignalResult
+from backend.self_assessment import map_to_archetype, NEUTRAL_BAND
 
 
 # ---------------------------------------------------------------------------
@@ -524,3 +526,254 @@ def compute_skill_badges(
         for trigger_type in BADGE_METADATA
         if not any(trigger_type in session_triggers for session_triggers in last_n)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Context ideals — heuristic mapping (documented, configurable)
+# ---------------------------------------------------------------------------
+
+# Maps meeting context → acceptable archetypes for that context.
+# HEURISTIC: Based on TRACOM SOCIAL STYLE practitioner observation, not empirical data.
+# Treat as configurable defaults. Not all archetypes are wrong for all contexts —
+# an Architect in a client meeting may be appropriate depending on the client.
+CONTEXT_IDEALS: dict[str, list[str]] = {
+    "board": ["Firestarter", "Architect"],
+    "team": ["Bridge Builder"],
+    "1:1": ["Inquisitor", "Bridge Builder"],
+    "client": ["Firestarter"],
+    "all-hands": ["Firestarter", "Bridge Builder"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Flexibility Score (TRACOM Versatility operationalization)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FlexibilityScore:
+    """
+    Flexibility = range × appropriateness.
+
+    range_score: distribution width across contexts (0–1).
+    appropriateness_score: fraction of contexts matching ideal archetype (0–1).
+    flexibility: the product (0–1).
+    dominant_contexts: list of (context, archetype) pairs.
+    """
+    range_score: float
+    appropriateness_score: float
+    flexibility: float
+    dominant_contexts: list[tuple[str, str]]
+
+
+def compute_flexibility_score(
+    core_focus: float,
+    core_stance: float,
+    core_focus_var: float,
+    core_stance_var: float,
+    context_profiles: list[dict],
+    *,
+    min_contexts: int = 2,
+    min_sessions_per_context: int = 3,
+) -> FlexibilityScore | None:
+    """
+    Compute Flexibility Score from distribution width and context appropriateness.
+
+    Parameters
+    ----------
+    core_focus, core_stance: core axis scores.
+    core_focus_var, core_stance_var: core axis variances (from Welford).
+    context_profiles: list of dicts with keys: context, archetype, sessions.
+    min_contexts: minimum number of qualified contexts to produce a score.
+    min_sessions_per_context: minimum sessions before a context is included.
+
+    Returns None when < min_contexts are available. Pure function.
+    """
+    # Filter to contexts with enough sessions
+    qualified = [
+        cp for cp in context_profiles
+        if cp.get("sessions", 0) >= min_sessions_per_context
+    ]
+    if len(qualified) < min_contexts:
+        return None
+
+    # Range: sqrt(focus_var + stance_var) / 100, clamped [0, 1]
+    range_score = min(1.0, math.sqrt(core_focus_var + core_stance_var) / 100.0)
+
+    # Appropriateness: weighted fraction of contexts matching ideal archetypes.
+    # Full credit (1.0) for exact match, partial credit (0.5) for contexts with
+    # no defined ideal (unknown contexts), zero for mismatch.
+    appropriate_sum = 0.0
+    dominant_contexts: list[tuple[str, str]] = []
+    for cp in qualified:
+        ctx = cp.get("context", "unknown")
+        arch = cp.get("archetype", "Undetermined")
+        dominant_contexts.append((ctx, arch))
+        ideals = CONTEXT_IDEALS.get(ctx, [])
+        if not ideals:
+            appropriate_sum += 0.5  # No ideal defined — partial credit
+        elif arch in ideals:
+            appropriate_sum += 1.0
+
+    appropriateness_score = appropriate_sum / len(qualified) if qualified else 0.0
+    flexibility = round(range_score * appropriateness_score, 4)
+
+    return FlexibilityScore(
+        range_score=round(range_score, 4),
+        appropriateness_score=round(appropriateness_score, 4),
+        flexibility=flexibility,
+        dominant_contexts=dominant_contexts,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bayesian Knowledge Tracing (BKT)
+# ---------------------------------------------------------------------------
+
+def bkt_update(
+    p_know: float,
+    p_transit: float,
+    p_guess: float,
+    p_slip: float,
+    observed_correct: bool,
+) -> float:
+    """
+    Standard BKT update. Returns new P(know).
+
+    If observed_correct:
+        P(know|correct) = P(know)(1−P(slip)) / [P(know)(1−P(slip)) + (1−P(know))P(guess)]
+    If observed_incorrect:
+        P(know|incorrect) = P(know)P(slip) / [P(know)P(slip) + (1−P(know))(1−P(guess))]
+
+    Then apply learning transition:
+        P(know_new) = P(know|obs) + (1 − P(know|obs)) × P(transit)
+
+    Result is clamped to [0.0, 1.0]. Pure function.
+    """
+    if observed_correct:
+        numerator = p_know * (1.0 - p_slip)
+        denominator = p_know * (1.0 - p_slip) + (1.0 - p_know) * p_guess
+    else:
+        numerator = p_know * p_slip
+        denominator = p_know * p_slip + (1.0 - p_know) * (1.0 - p_guess)
+
+    if abs(denominator) < 1e-12:
+        p_know_given_obs = p_know
+    else:
+        p_know_given_obs = numerator / denominator
+
+    # Learning transition
+    p_know_new = p_know_given_obs + (1.0 - p_know_given_obs) * p_transit
+    return max(0.0, min(1.0, round(p_know_new, 6)))
+
+
+def classify_skill_opportunity(
+    triggered_by: str | None,
+    effectiveness_score: float | None,
+    counterpart_archetype: str | None,
+    *,
+    effectiveness_threshold: float = 0.5,
+) -> list[tuple[str, bool]]:
+    """
+    Map a coaching prompt result to (skill_key, observed_correct) tuples.
+
+    A prompt is "correct" (skill demonstrated) when effectiveness_score >= threshold.
+    Maps triggered_by strings to the simplified 5-key taxonomy.
+    Unrecognized triggered_by prefixes are silently ignored (no crash).
+
+    Pure function.
+    """
+    if triggered_by is None or effectiveness_score is None:
+        return []
+
+    results: list[tuple[str, bool]] = []
+    correct = effectiveness_score >= effectiveness_threshold
+
+    # Map triggered_by to skill keys
+    if triggered_by.startswith("elm:ego_threat"):
+        results.append(("elm:ego_threat", correct))
+    elif triggered_by.startswith("elm:shortcut"):
+        results.append(("elm:shortcut", correct))
+    elif triggered_by.startswith("elm:"):
+        # Other ELM triggers map to ego_threat by default
+        results.append(("elm:ego_threat", correct))
+
+    if triggered_by.startswith("cadence:"):
+        # Cadence prompts test timing skill
+        results.append(("timing:talk_ratio", correct))
+
+    # Pairing-related prompts
+    if counterpart_archetype and counterpart_archetype != "Unknown":
+        results.append(("pairing:archetype_match", correct))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# CAPS If-Then Signature (Mischel & Shoda)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CAPSSignature:
+    """
+    Context → archetype mapping (if-then behavioral signature).
+
+    signatures: dict of context → dominant archetype.
+    stability: 0–1, how consistent the signature is across sessions.
+    signature_sessions: total sessions across all included contexts.
+    """
+    signatures: dict[str, str]
+    stability: float
+    signature_sessions: int
+
+
+def compute_caps_signature(
+    context_profiles: list[dict],
+    *,
+    min_sessions: int = 3,
+    neutral_band: int = NEUTRAL_BAND,
+) -> CAPSSignature:
+    """
+    Build CAPS if-then signature from context profiles.
+
+    Parameters
+    ----------
+    context_profiles: list of dicts with keys: context, focus_score, stance_score, sessions.
+    min_sessions: minimum sessions per context to include.
+    neutral_band: archetype mapping band.
+
+    Returns CAPSSignature with empty signatures dict when no contexts qualify.
+    Pure function.
+    """
+    qualified = [
+        cp for cp in context_profiles
+        if cp.get("sessions", 0) >= min_sessions
+    ]
+    if not qualified:
+        return CAPSSignature(signatures={}, stability=0.0, signature_sessions=0)
+
+    signatures: dict[str, str] = {}
+    total_sessions = 0
+    for cp in qualified:
+        arch = map_to_archetype(
+            cp.get("focus_score", 0.0),
+            cp.get("stance_score", 0.0),
+            neutral_band=neutral_band,
+        )
+        signatures[cp["context"]] = arch
+        total_sessions += cp.get("sessions", 0)
+
+    # Stability: fraction of contexts with the same archetype as the most common
+    if signatures:
+        archetype_counts: dict[str, int] = {}
+        for arch in signatures.values():
+            archetype_counts[arch] = archetype_counts.get(arch, 0) + 1
+        most_common_count = max(archetype_counts.values())
+        stability = most_common_count / len(signatures)
+    else:
+        stability = 0.0
+
+    return CAPSSignature(
+        signatures=signatures,
+        stability=round(stability, 4),
+        signature_sessions=total_sessions,
+    )

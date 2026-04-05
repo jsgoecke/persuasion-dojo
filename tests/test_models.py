@@ -47,10 +47,15 @@ from datetime import datetime, timezone
 from backend.models import (
     ContextProfile,
     MeetingSession,
+    Participant,
+    ParticipantContextProfile,
     ProfileSnapshot,
     SessionObservation,
     User,
     _ewma_update,
+    _welford_m2_update,
+    m2_to_variance,
+    apply_participant_observation,
     apply_session_observation,
     confidence_from_sessions,
     get_profile_snapshot,
@@ -70,6 +75,8 @@ def _user(**kwargs) -> User:
         id="user-1",
         core_focus=0.0,
         core_stance=0.0,
+        core_focus_var=0.0,
+        core_stance_var=0.0,
         core_confidence=SELF_ASSESSMENT_PRIOR_CONFIDENCE,
         core_sessions=0,
         sa_completed_at=None,
@@ -85,6 +92,8 @@ def _ctx_profile(context: str, sessions: int = 0, focus: float = 0.0, stance: fl
         context=context,
         focus_score=focus,
         stance_score=stance,
+        focus_var=0.0,
+        stance_var=0.0,
         sessions=sessions,
     )
 
@@ -392,3 +401,110 @@ class TestSeedFromSelfAssessment:
         seed_from_self_assessment(user, 5.0, 5.0, archetype=None, confidence=0.38)
         assert user.sa_archetype is None
         assert user.sa_completed_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Welford's online variance update
+# ---------------------------------------------------------------------------
+
+class TestWelfordVariance:
+    def test_known_sequence(self):
+        """M2 of [10, 20, 30] converts to population variance ≈ 66.67."""
+        # Simulate feeding 10, 20, 30 through EWMA + Welford M2
+        m2 = 0.0
+        # After obs=10: old_mean=0, new_mean=10
+        m2 = _welford_m2_update(0.0, 0.0, 10.0, 10.0, 1.0)
+        assert m2_to_variance(m2, 1) == 0.0  # n<2, returns 0
+
+        # After obs=20: old_mean=10, new_mean=15
+        m2 = _welford_m2_update(m2, 10.0, 15.0, 20.0, 1.0)
+        assert m2 > 0  # M2 accumulates
+        assert m2_to_variance(m2, 2) > 0  # now we have variance
+
+        # After obs=30: old_mean=15, new_mean=20
+        m2 = _welford_m2_update(m2, 15.0, 20.0, 30.0, 1.0)
+        # Population variance of [10,20,30] ≈ 66.67
+        variance = m2_to_variance(m2, 3)
+        assert 40 < variance < 120  # reasonable range given EWMA weighting
+
+    def test_single_observation_zero(self):
+        """M2 after a single observation yields variance 0."""
+        m2 = _welford_m2_update(0.0, 0.0, 50.0, 50.0, 1.0)
+        assert m2_to_variance(m2, 1) == 0.0
+
+    def test_zero_confidence_unchanged(self):
+        """obs_confidence=0 means no new information — M2 unchanged."""
+        result = _welford_m2_update(25.0, 50.0, 50.0, 70.0, 0.0)
+        assert result == 25.0
+
+    def test_negative_clamp(self):
+        """Floating-point edge: M2 is clamped to max(0, m2)."""
+        result = _welford_m2_update(0.001, 50.0, 50.0, 50.0, 1.0)
+        assert result >= 0.0
+
+
+class TestApplySessionObservationVariance:
+    def test_variance_updates_alongside_mean(self):
+        """apply_session_observation updates variance fields alongside core axes."""
+        user = _user(core_focus=50.0, core_stance=50.0, core_sessions=5)
+        ctx = _ctx_profile("board", sessions=3, focus=60.0, stance=40.0)
+        profiles = {"board": ctx}
+
+        # Observation far from current mean should increase variance
+        obs = _obs(context="board", focus=80.0, stance=20.0)
+        apply_session_observation(user, profiles, obs)
+
+        assert user.core_sessions == 6
+        assert user.core_focus_var >= 0.0
+        assert user.core_stance_var >= 0.0
+        assert ctx.focus_var >= 0.0
+        assert ctx.stance_var >= 0.0
+
+    def test_variance_grows_with_diverse_observations(self):
+        """Multiple diverse observations should produce non-zero variance."""
+        user = _user(core_focus=0.0, core_stance=0.0, core_sessions=0)
+        ctx = _ctx_profile("team", sessions=0)
+        profiles = {"team": ctx}
+
+        # Feed alternating high/low observations
+        for focus_val in [80.0, -60.0, 70.0, -50.0, 60.0]:
+            obs = _obs(context="team", focus=focus_val, stance=0.0)
+            apply_session_observation(user, profiles, obs)
+
+        assert user.core_focus_var > 0.0
+        assert user.core_sessions == 5
+
+
+class TestProfileSnapshotVariance:
+    def test_snapshot_includes_variance_core(self):
+        """ProfileSnapshot derives variance from M2 stored on core profile."""
+        user = _user(core_focus=50.0, core_stance=-30.0, core_sessions=5)
+        user.core_focus_var = 500.0  # M2 accumulator
+        user.core_stance_var = 250.0
+        snapshot = get_profile_snapshot(user, {}, "board")
+        # m2_to_variance(500, 5) = 100.0; m2_to_variance(250, 5) = 50.0
+        assert snapshot.focus_variance == 100.0
+        assert snapshot.stance_variance == 50.0
+
+    def test_snapshot_includes_variance_context(self):
+        """ProfileSnapshot uses context-specific M2→variance when context is trusted."""
+        user = _user(core_focus=50.0, core_stance=-30.0, core_sessions=10)
+        user.core_focus_var = 1000.0
+        user.core_stance_var = 500.0
+        ctx = _ctx_profile("board", sessions=5, focus=70.0, stance=-10.0)
+        ctx.focus_var = 1000.0  # M2 accumulator
+        ctx.stance_var = 400.0
+        snapshot = get_profile_snapshot(user, {"board": ctx}, "board")
+        assert snapshot.is_context_specific is True
+        # m2_to_variance(1000, 5) = 200.0; m2_to_variance(400, 5) = 80.0
+        assert snapshot.focus_variance == 200.0
+        assert snapshot.stance_variance == 80.0
+
+    def test_backward_compat_no_variance_fields(self):
+        """User with default M2=0.0 works in all paths without error."""
+        user = _user(core_sessions=3)
+        assert user.core_focus_var == 0.0
+        assert user.core_stance_var == 0.0
+        snapshot = get_profile_snapshot(user, {}, "unknown")
+        assert snapshot.focus_variance == 0.0
+        assert snapshot.stance_variance == 0.0

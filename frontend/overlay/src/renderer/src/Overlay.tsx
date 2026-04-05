@@ -194,8 +194,10 @@ export function Overlay(): React.ReactElement {
   const [sparDifficulty, setSparDifficulty] = useState<Difficulty>("challenge");
 
   // Rehearse state
-  const [rehearseContact, setRehearseContact] = useState<number | null>(null);
+  const [rehearseContact, setRehearseContact] = useState<string | null>(null);
   const [rehearseTopic, setRehearseTopic]   = useState("");
+  const [rehearseContacts, setRehearseContacts] = useState<Array<{ id: string; name: string; archetype: string | null; notes: string | null }>>([]);
+  const [rehearseLoading, setRehearseLoading] = useState(false);
 
   // Recent sessions (from backend)
   const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
@@ -286,6 +288,19 @@ export function Overlay(): React.ReactElement {
       .then(r => r.ok ? r.json() : [])
       .then((data: unknown[]) => setProfileCount(data.length))
       .catch(() => {});
+  }, [screen]);
+
+  // Fetch participant profiles for rehearse-setup screen
+  useEffect(() => {
+    if (screen !== "rehearse-setup") return;
+    setRehearseLoading(true);
+    fetch("http://localhost:8000/participants")
+      .then(r => r.ok ? r.json() : [])
+      .then((data: Array<{ id: string; name: string; archetype: string | null; notes: string | null }>) => {
+        setRehearseContacts(data);
+        setRehearseLoading(false);
+      })
+      .catch(() => { setRehearseContacts([]); setRehearseLoading(false); });
   }, [screen]);
 
   // Fetch recent sessions when navigating to home, or when search query changes
@@ -864,24 +879,44 @@ export function Overlay(): React.ReactElement {
   // SCREEN: REHEARSE SETUP
   // ═════════════════════════════════════════════════════════════════════════
   if (screen === "rehearse-setup") {
-    const contacts = [
-      { initials: "SC", name: "Sarah Chen", type: "Inquisitor", role: "VP Engineering" },
-      { initials: "MR", name: "Mike Rodriguez", type: "Architect", role: "CFO" },
-      { initials: "KB", name: "Kevin Brown", type: "Bridge Builder", role: "EVP Operations" },
-    ];
+    const getInitials = (name: string) =>
+      name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+
     return shell(
       <div style={{ animation: "fadeIn 200ms ease-out" }}>
         {topBar("Rehearse setup", () => setScreen("prepare"))}
 
         <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Choose a contact</div>
-        {contacts.map((c, i) => (
+        {rehearseLoading && (
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", padding: "20px 0", textAlign: "center" }}>
+            Loading profiles...
+          </div>
+        )}
+        {!rehearseLoading && rehearseContacts.length === 0 && (
+          <div style={{ padding: "20px 0", textAlign: "center" }}>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 12 }}>
+              No profiles yet. Add participants via the Profiles screen or analyse a transcript first.
+            </div>
+            <button
+              onClick={() => setScreen("profiles")}
+              style={{
+                background: "none", border: "1px solid var(--border-medium)", borderRadius: 8,
+                padding: "8px 16px", fontFamily: BODY, fontSize: 13, color: "var(--gold)",
+                cursor: "pointer",
+              }}
+            >
+              Go to Profiles
+            </button>
+          </div>
+        )}
+        {!rehearseLoading && rehearseContacts.map(c => (
           <div
-            key={i}
-            onClick={() => setRehearseContact(i)}
+            key={c.id}
+            onClick={() => setRehearseContact(c.id)}
             style={{
               display: "flex", alignItems: "center", gap: 14, padding: "14px 16px",
-              background: rehearseContact === i ? "rgba(212, 168, 83, 0.04)" : "var(--bg-card)",
-              border: `1.5px solid ${rehearseContact === i ? "var(--gold)" : "var(--border-subtle)"}`,
+              background: rehearseContact === c.id ? "rgba(212, 168, 83, 0.04)" : "var(--bg-card)",
+              border: `1.5px solid ${rehearseContact === c.id ? "var(--gold)" : "var(--border-subtle)"}`,
               borderRadius: 10, cursor: "pointer",
               transition: "border-color 200ms ease, background 200ms ease",
               marginBottom: 8,
@@ -892,12 +927,12 @@ export function Overlay(): React.ReactElement {
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 14, fontWeight: 500, color: "var(--blue)", flexShrink: 0,
             }}>
-              {c.initials}
+              {getInitials(c.name)}
             </div>
             <div>
               <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text-primary)" }}>{c.name}</div>
-              <div style={{ fontSize: 12, color: "var(--blue)", marginTop: 1 }}>{c.type}</div>
-              <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 1 }}>{c.role}</div>
+              {c.archetype && <div style={{ fontSize: 12, color: "var(--blue)", marginTop: 1 }}>{c.archetype}</div>}
+              {c.notes && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 1 }}>{c.notes}</div>}
             </div>
           </div>
         ))}
@@ -917,15 +952,19 @@ export function Overlay(): React.ReactElement {
         />
 
         <button
-          onClick={() => setScreen("rehearse-live")}
+          onClick={() => { if (rehearseContact) setScreen("rehearse-live"); }}
+          disabled={!rehearseContact}
           style={{
             display: "flex", alignItems: "center", justifyContent: "center",
-            width: "100%", height: 54, background: "var(--gold)", color: "var(--bg-primary)",
+            width: "100%", height: 54,
+            background: rehearseContact ? "var(--gold)" : "rgba(212, 168, 83, 0.3)",
+            color: "var(--bg-primary)",
             fontFamily: BODY, fontSize: 16, fontWeight: 500, border: "none",
-            borderRadius: 12, cursor: "pointer", transition: "background 200ms ease",
+            borderRadius: 12, cursor: rehearseContact ? "pointer" : "not-allowed",
+            transition: "background 200ms ease",
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = "var(--gold-hover)"; }}
-          onMouseLeave={e => { e.currentTarget.style.background = "var(--gold)"; }}
+          onMouseEnter={e => { if (rehearseContact) e.currentTarget.style.background = "var(--gold-hover)"; }}
+          onMouseLeave={e => { if (rehearseContact) e.currentTarget.style.background = "var(--gold)"; }}
         >
           Begin rehearsal
         </button>
@@ -1398,9 +1437,17 @@ export function Overlay(): React.ReactElement {
   // the same backend flow, just different initial prompt context)
   // ═════════════════════════════════════════════════════════════════════════
   if (screen === "rehearse-live") {
+    const selectedContact = rehearseContacts.find(c => c.id === rehearseContact);
+    const oppArchetype = selectedContact?.archetype as
+      | "Architect" | "Firestarter" | "Inquisitor" | "Bridge Builder"
+      | undefined;
     return shell(
       <div style={{ animation: "fadeIn 200ms ease-out" }}>
-        <SparringPane onBack={() => setScreen("home")} />
+        <SparringPane
+          onBack={() => setScreen("home")}
+          defaultOpponentArchetype={oppArchetype}
+          defaultScenario={rehearseTopic || undefined}
+        />
       </div>,
     );
   }

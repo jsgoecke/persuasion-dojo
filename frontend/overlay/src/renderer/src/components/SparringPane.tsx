@@ -128,13 +128,15 @@ interface SetupViewProps {
     scenario: string,
   ) => void;
   onBack: () => void;
+  defaultOpponentArchetype?: SparringArchetype;
+  defaultScenario?: string;
 }
 
-function SetupView({ onStart, onBack }: SetupViewProps): React.ReactElement {
+function SetupView({ onStart, onBack, defaultOpponentArchetype, defaultScenario }: SetupViewProps): React.ReactElement {
   const [userArc, setUserArc]       = useState<SparringArchetype>("Architect");
-  const [oppArc, setOppArc]         = useState<SparringArchetype>("Inquisitor");
-  const [scenario, setScenario]     = useState(SCENARIO_PRESETS[0]);
-  const [customScenario, setCustom] = useState("");
+  const [oppArc, setOppArc]         = useState<SparringArchetype>(defaultOpponentArchetype ?? "Inquisitor");
+  const [scenario, setScenario]     = useState(defaultScenario ? "custom" : SCENARIO_PRESETS[0]);
+  const [customScenario, setCustom] = useState(defaultScenario ?? "");
 
   const finalScenario = scenario === "custom" ? customScenario.trim() : scenario;
 
@@ -503,9 +505,13 @@ function EndedView({
 
 export interface SparringPaneProps {
   onBack: () => void;
+  /** Pre-fill opponent archetype (e.g. from rehearse-setup contact selection). */
+  defaultOpponentArchetype?: SparringArchetype;
+  /** Pre-fill scenario/topic (e.g. from rehearse-setup topic input). */
+  defaultScenario?: string;
 }
 
-export function SparringPane({ onBack }: SparringPaneProps): React.ReactElement {
+export function SparringPane({ onBack, defaultOpponentArchetype, defaultScenario }: SparringPaneProps): React.ReactElement {
   const {
     phase, turns, streamingChunk, totalTurns, error,
     start, sendTurn, end, reset,
@@ -544,6 +550,8 @@ export function SparringPane({ onBack }: SparringPaneProps): React.ReactElement 
       {(phase === "idle" || phase === "setup") && (
         <SetupView
           onBack={onBack}
+          defaultOpponentArchetype={defaultOpponentArchetype}
+          defaultScenario={defaultScenario}
           onStart={(ua, oa, sc) => {
             setMaxTurns(10);
             void start(ua, oa, sc, 10);

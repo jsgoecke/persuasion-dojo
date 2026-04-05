@@ -563,3 +563,218 @@ class TestUserBehaviorObserver:
         obs2 = obs.get_observation("s", "board")
         assert obs1.focus_score == obs2.focus_score
         assert obs1.obs_confidence == obs2.obs_confidence
+
+
+# ---------------------------------------------------------------------------
+# Convergence tests — prove archetype classification stabilizes over time
+# ---------------------------------------------------------------------------
+
+# Realistic utterances that a CFO (Architect) would say in a board meeting.
+# These aren't pure signal — they mix data language with some narrative/advocacy,
+# which is realistic and makes convergence harder.
+_REALISTIC_ARCHITECT = [
+    "Looking at Q3 revenue, we're tracking at 12.4 million against a 14 million target. What does the team think about the gap?",
+    "The pipeline report shows 47 qualified opportunities. I'd like to understand which ones are at risk.",
+    "Our analysis of churn data indicates the root cause is onboarding. The metrics from cohort 3 prove it.",
+    "I recommend we benchmark against industry standards. The research from Gartner is pretty compelling.",
+    "We need a data-driven approach here. Let's look at the correlation between NPS and renewal rates.",
+    "The statistics show a 23% improvement since last quarter. Have you considered what's driving that?",
+    "Here are the KPIs I'd propose for next quarter. Each one is measurable and tied to evidence.",
+    "I've been analyzing the competitive landscape. Their pricing strategy is based on solid research.",
+    "The evidence from our A/B test is clear — variant B drove 31% higher conversion. Therefore we should scale it.",
+    "Before we commit, I want to validate these numbers. The analysis needs to account for seasonality.",
+]
+
+_REALISTIC_FIRESTARTER = [
+    "Imagine what we could accomplish if we doubled our team. The energy would be incredible!",
+    "I remember when we launched version 1 — the whole company was excited. Let's recapture that passion.",
+    "Let's move forward with the rebrand. I believe we should lead with a bold vision that inspires everyone.",
+    "Picture this: a product so compelling that customers sell it for us. We should commit to that journey.",
+    "The story we tell matters more than the feature list. We need to inspire, not just inform.",
+    "I feel strongly that we should go bigger. When I think about what excites our customers, it's the vision.",
+    "We must lead with passion here. I propose we envision a scenario where we dominate the category.",
+    "Let me tell you about a conversation I had with a customer — she was emotional about what we built.",
+    "Our journey so far has been inspiring. We should move forward boldly and commit to this dream.",
+    "I believe we can transform this market. Imagine the impact — it's like nothing the industry has seen.",
+]
+
+_REALISTIC_BRIDGE_BUILDER = [
+    "What does everyone think about this proposal? I'm curious to hear different perspectives.",
+    "I've been reflecting on the feedback from the team. How do you feel about the direction?",
+    "Perhaps we should explore alternatives before deciding. What are your thoughts on a phased approach?",
+    "I'd like to understand where each person is coming from. Open to hearing all input and feedback.",
+    "Picture how the team might experience this change. What do you think would make it feel right?",
+    "I wonder if there's a scenario where both sides feel heard. Let's consider everyone's perspective.",
+    "The story from the customer team was eye-opening. Have you considered how they feel about this?",
+    "I'm curious about what the group thinks. Perhaps we could explore this from another angle?",
+    "It depends on how we frame the narrative. I'd like to understand what matters most to each person.",
+    "Imagine if we approached this as a journey we all own. What does the team think about that?",
+]
+
+_REALISTIC_INQUISITOR = [
+    "The data clearly supports option A. We should commit to the metrics-driven approach — let's move forward.",
+    "I recommend we focus on the evidence. Therefore, we need to act on the research before the window closes.",
+    "The analysis is definitive — 67% improvement. We must decide now. I propose we lock in this direction.",
+    "Specifically, the benchmark shows we're outperforming. We should move forward based on these statistics.",
+    "I believe we need to validate this hypothesis. The test results prove it — let's commit immediately.",
+    "Because the evidence is clear, we must act. I recommend the data-driven path and we should not delay.",
+    "The KPIs tell the story precisely. We need to decide — I suggest we go with what the metrics indicate.",
+    "In fact, the report confirms our analysis. We should move forward. The proof is in the numbers.",
+    "Our research is conclusive. We must commit to the evidence-based strategy. I recommend option B.",
+    "The correlation is significant. Therefore, we need to act on this data. Let's decide today.",
+]
+
+# Mixed/neutral utterances that don't clearly signal any archetype
+_REALISTIC_NEUTRAL = [
+    "Okay, that makes sense.",
+    "Sure, I agree. Moving on to the next topic.",
+    "Right. Got it. Thanks for the update.",
+    "Yeah, I see what you mean. Good point.",
+    "Understood. Will follow up offline.",
+]
+
+
+class TestConvergence:
+    """Prove that speakers classified as Undetermined converge to a real archetype."""
+
+    def test_pure_architect_converges_by_utterance_5(self):
+        """Strong Architect signals converge within the 5-utterance window."""
+        profiler = ParticipantProfiler()
+        results = [profiler.add_utterance("A", u) for u in _REALISTIC_ARCHITECT[:5]]
+        assert results[-1].superpower == "Architect"
+        assert results[-1].confidence >= 0.3
+
+    def test_pure_firestarter_converges_by_utterance_5(self):
+        profiler = ParticipantProfiler()
+        results = [profiler.add_utterance("A", u) for u in _REALISTIC_FIRESTARTER[:5]]
+        assert results[-1].superpower == "Firestarter"
+        assert results[-1].confidence >= 0.3
+
+    def test_pure_bridge_builder_converges_by_utterance_5(self):
+        profiler = ParticipantProfiler()
+        results = [profiler.add_utterance("A", u) for u in _REALISTIC_BRIDGE_BUILDER[:5]]
+        assert results[-1].superpower == "Bridge Builder"
+        assert results[-1].confidence >= 0.3
+
+    def test_pure_inquisitor_converges_by_utterance_5(self):
+        profiler = ParticipantProfiler()
+        results = [profiler.add_utterance("A", u) for u in _REALISTIC_INQUISITOR[:5]]
+        assert results[-1].superpower == "Inquisitor"
+        assert results[-1].confidence >= 0.3
+
+    def test_noisy_start_converges_after_window_eviction(self):
+        """3 neutral utterances followed by 5 Architect utterances → converges by utterance 8."""
+        profiler = ParticipantProfiler()
+        for u in _REALISTIC_NEUTRAL[:3]:
+            profiler.add_utterance("A", u)
+        results = []
+        for u in _REALISTIC_ARCHITECT[:5]:
+            results.append(profiler.add_utterance("A", u))
+        # By utterance 8 (3 neutral evicted, 5 architect in window)
+        assert results[-1].superpower == "Architect"
+
+    def test_confidence_increases_monotonically_with_consistent_signal(self):
+        """Confidence should grow as more consistent utterances arrive."""
+        profiler = ParticipantProfiler()
+        confidences = []
+        for u in _REALISTIC_FIRESTARTER[:5]:
+            r = profiler.add_utterance("A", u)
+            confidences.append(r.confidence)
+        # Confidence should be non-decreasing (with consistent signal)
+        for i in range(1, len(confidences)):
+            assert confidences[i] >= confidences[i - 1], (
+                f"Confidence decreased at utterance {i + 1}: {confidences[i - 1]} → {confidences[i]}"
+            )
+
+    def test_all_archetypes_achievable_with_10_realistic_utterances(self):
+        """All 4 archetypes must be reachable with realistic (not pure) utterances."""
+        cases = [
+            (_REALISTIC_ARCHITECT, "Architect"),
+            (_REALISTIC_FIRESTARTER, "Firestarter"),
+            (_REALISTIC_BRIDGE_BUILDER, "Bridge Builder"),
+            (_REALISTIC_INQUISITOR, "Inquisitor"),
+        ]
+        for utterances, expected in cases:
+            profiler = ParticipantProfiler()
+            for u in utterances:
+                result = profiler.add_utterance("A", u)
+            assert result.superpower == expected, (
+                f"Expected {expected}, got {result.superpower} "
+                f"(focus={result.focus_score}, stance={result.stance_score})"
+            )
+
+    def test_neutral_speaker_stays_undetermined(self):
+        """A speaker with only neutral/filler utterances should remain Undetermined."""
+        profiler = ParticipantProfiler()
+        for u in _REALISTIC_NEUTRAL:
+            result = profiler.add_utterance("A", u)
+        assert result.superpower == "Undetermined"
+
+    def test_cross_session_ewma_convergence(self):
+        """Simulate multiple sessions via apply_participant_observation and verify convergence."""
+        from backend.models import Participant, apply_participant_observation
+        from datetime import datetime, timezone
+
+        p = Participant(
+            user_id="test",
+            name="Test Person",
+            obs_focus=0.0,
+            obs_stance=0.0,
+            obs_sessions=0,
+            obs_confidence=0.0,
+            obs_archetype="Undetermined",
+            obs_focus_var=0.0,
+            obs_stance_var=0.0,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        # 5 sessions of consistent Architect signals (focus > 0, stance < 0)
+        for _ in range(5):
+            apply_participant_observation(
+                p, {},
+                focus_score=65.0,
+                stance_score=-55.0,
+                confidence=0.6,
+                context="board",
+            )
+
+        assert p.obs_archetype == "Architect"
+        assert p.obs_sessions == 5
+        assert p.obs_confidence > 0.5
+
+    def test_initially_undetermined_converges_across_sessions(self):
+        """A participant who starts Undetermined should converge with enough sessions."""
+        from backend.models import Participant, apply_participant_observation
+        from datetime import datetime, timezone
+
+        p = Participant(
+            user_id="test",
+            name="Slow Starter",
+            obs_focus=0.0,
+            obs_stance=0.0,
+            obs_sessions=0,
+            obs_confidence=0.0,
+            obs_archetype="Undetermined",
+            obs_focus_var=0.0,
+            obs_stance_var=0.0,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        # Session 1: weak signal, stays near zero
+        apply_participant_observation(
+            p, {}, focus_score=10.0, stance_score=-8.0, confidence=0.2, context="board",
+        )
+        assert p.obs_archetype == "Undetermined"
+
+        # Sessions 2-5: consistent moderate Architect signals
+        for _ in range(4):
+            apply_participant_observation(
+                p, {}, focus_score=45.0, stance_score=-40.0, confidence=0.5, context="board",
+            )
+
+        # Should have converged out of Undetermined by now
+        assert p.obs_archetype != "Undetermined", (
+            f"Still Undetermined after 5 sessions: focus={p.obs_focus}, stance={p.obs_stance}"
+        )

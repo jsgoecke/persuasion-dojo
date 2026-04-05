@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1.0] - 2026-04-05
+
+### Fixed
+- Participant profiler no longer classifies strong single-axis speakers as "Unknown." A data-heavy speaker with clear Logic signals but no Advocacy/Analysis signals now gets a tentative Architect classification instead of staying Undetermined permanently. The profiler now uses AND-based neutral band logic (both axes must be ambiguous) rather than OR-based (either axis ambiguous), with a tighter ±10 band tuned for sparse real-speech regex signals.
+
+### Added
+- 10 convergence tests proving all 4 archetypes are reachable within 5 realistic utterances, confidence increases monotonically, noisy starts converge after window eviction, and cross-session EWMA convergence works for initially-undetermined participants.
+
 ## [0.9.0.0] - 2026-03-31
 
 ### Added

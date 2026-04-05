@@ -646,6 +646,7 @@ def _welford_m2_update(
 
     The *_var fields on ORM models actually store M2 (not variance).
     """
+    old_m2 = old_m2 or 0.0
     weight = max(0.0, min(1.0, obs_confidence))
     if weight == 0.0:
         return old_m2

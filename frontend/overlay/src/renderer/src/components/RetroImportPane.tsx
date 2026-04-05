@@ -100,11 +100,8 @@ export function RetroImportPane({ onBack, onViewSession, activeJobId, onJobIdCha
         if (!res.ok) return;
         const data: Job = await res.json();
         setJob(data);
-        if (data.status === "error") {
-          if (pollRef.current) clearInterval(pollRef.current);
-        }
-        if (data.status === "done" && data.debrief) {
-          if (pollRef.current) clearInterval(pollRef.current);
+        if (data.status === "done" || data.status === "error") {
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         }
       } catch {
         // polling — ignore transient errors

@@ -1,0 +1,75 @@
+{
+  "scenario": "short_call",
+  "description": "Minimal 2-speaker fixture, 2 utterances, ~5s. For fast tests.",
+  "streaming_events": [
+    {
+      "type": "Metadata",
+      "request_id": "emulator-short-001",
+      "model_info": {"name": "nova-2", "version": "2024-01-01"},
+      "model_uuid": "emulator"
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "start": 0.0,
+      "duration": 2.0,
+      "channel": {
+        "alternatives": [{
+          "transcript": "Let's move to the next item.",
+          "confidence": 0.97,
+          "words": [
+            {"word": "Let's", "start": 0.0, "end": 0.32, "confidence": 0.98, "speaker": 0, "punctuated_word": "Let's"},
+            {"word": "move", "start": 0.33, "end": 0.58, "confidence": 0.97, "speaker": 0, "punctuated_word": "move"},
+            {"word": "to", "start": 0.59, "end": 0.68, "confidence": 0.99, "speaker": 0, "punctuated_word": "to"},
+            {"word": "the", "start": 0.69, "end": 0.78, "confidence": 0.99, "speaker": 0, "punctuated_word": "the"},
+            {"word": "next", "start": 0.79, "end": 1.05, "confidence": 0.98, "speaker": 0, "punctuated_word": "next"},
+            {"word": "item", "start": 1.06, "end": 1.42, "confidence": 0.96, "speaker": 0, "punctuated_word": "item."}
+          ]
+        }]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "start": 2.5,
+      "duration": 2.5,
+      "channel": {
+        "alternatives": [{
+          "transcript": "Agreed. I think we should prioritize the budget review.",
+          "confidence": 0.96,
+          "words": [
+            {"word": "Agreed", "start": 2.5, "end": 2.85, "confidence": 0.97, "speaker": 1, "punctuated_word": "Agreed."},
+            {"word": "I", "start": 2.95, "end": 3.02, "confidence": 0.99, "speaker": 1, "punctuated_word": "I"},
+            {"word": "think", "start": 3.03, "end": 3.28, "confidence": 0.98, "speaker": 1, "punctuated_word": "think"},
+            {"word": "we", "start": 3.29, "end": 3.38, "confidence": 0.99, "speaker": 1, "punctuated_word": "we"},
+            {"word": "should", "start": 3.39, "end": 3.65, "confidence": 0.97, "speaker": 1, "punctuated_word": "should"},
+            {"word": "prioritize", "start": 3.66, "end": 4.22, "confidence": 0.94, "speaker": 1, "punctuated_word": "prioritize"},
+            {"word": "the", "start": 4.23, "end": 4.32, "confidence": 0.99, "speaker": 1, "punctuated_word": "the"},
+            {"word": "budget", "start": 4.33, "end": 4.68, "confidence": 0.96, "speaker": 1, "punctuated_word": "budget"},
+            {"word": "review", "start": 4.69, "end": 4.98, "confidence": 0.97, "speaker": 1, "punctuated_word": "review."}
+          ]
+        }]
+      }
+    }
+  ],
+  "rest_response": {
+    "results": {
+      "utterances": [
+        {
+          "start": 0.0,
+          "end": 2.0,
+          "transcript": "Let's move to the next item.",
+          "speaker": 0,
+          "confidence": 0.97
+        },
+        {
+          "start": 2.5,
+          "end": 5.0,
+          "transcript": "Agreed. I think we should prioritize the budget review.",
+          "speaker": 1,
+          "confidence": 0.96
+        }
+      ]
+    }
+  }
+}

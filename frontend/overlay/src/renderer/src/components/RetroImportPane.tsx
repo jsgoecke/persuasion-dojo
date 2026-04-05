@@ -73,6 +73,12 @@ export function RetroImportPane({ onBack, onViewSession, activeJobId, onJobIdCha
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Inline name editing for participant profiles
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const editRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -243,32 +249,103 @@ export function RetroImportPane({ onBack, onViewSession, activeJobId, onJobIdCha
               Participant profiles
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {job.participants.map((p, i) => (
-                <div key={i} style={{
-                  background: "var(--bg-card)",
-                  borderRadius: 10,
-                  padding: "10px 14px",
-                  borderLeft: `3px solid ${p.participant_id ? "#0EA5E9" : "var(--gold)"}`,
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 600 }}>{p.name || p.speaker_id}</span>
-                      <span style={{ fontSize: 11, color: p.participant_id ? "var(--text-tertiary)" : "var(--gold)" }}>
-                        {p.participant_id ? "profile updated" : "new profile"}
+              {job.participants.map((p, i) => {
+                const isEditing = editingIdx === i;
+                const displayName = p.name || p.speaker_id;
+
+                const startEdit = () => {
+                  setEditingIdx(i);
+                  setEditName(displayName);
+                  setTimeout(() => editRef.current?.focus(), 50);
+                };
+
+                const saveEdit = async () => {
+                  const trimmed = editName.trim();
+                  if (!trimmed || trimmed === displayName || !p.participant_id) {
+                    setEditingIdx(null);
+                    return;
+                  }
+                  setSavingName(true);
+                  try {
+                    const resp = await fetch(`${API}/participants/${p.participant_id}/assign-name`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ name: trimmed }),
+                    });
+                    if (resp.ok) {
+                      // Update local state so the name shows immediately
+                      setJob(prev => {
+                        if (!prev?.participants) return prev;
+                        const updated = [...prev.participants];
+                        updated[i] = { ...updated[i], name: trimmed };
+                        return { ...prev, participants: updated };
+                      });
+                    }
+                  } catch { /* swallow */ }
+                  setSavingName(false);
+                  setEditingIdx(null);
+                };
+
+                return (
+                  <div key={i} style={{
+                    background: "var(--bg-card)",
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    borderLeft: `3px solid ${p.participant_id ? "#0EA5E9" : "var(--gold)"}`,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                        {isEditing ? (
+                          <input
+                            ref={editRef}
+                            value={editName}
+                            onChange={e => setEditName(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") void saveEdit();
+                              if (e.key === "Escape") setEditingIdx(null);
+                            }}
+                            onBlur={() => void saveEdit()}
+                            disabled={savingName}
+                            style={{
+                              fontSize: 13, fontWeight: 600, color: "var(--text-primary)",
+                              background: "var(--bg-primary)", border: "1px solid var(--gold-border)",
+                              borderRadius: 6, padding: "2px 8px", outline: "none",
+                              fontFamily: "var(--font-body)", width: "100%", maxWidth: 180,
+                            }}
+                          />
+                        ) : (
+                          <>
+                            <span
+                              onClick={p.participant_id ? startEdit : undefined}
+                              title={p.participant_id ? "Click to rename" : "No profile ID — cannot rename"}
+                              style={{
+                                fontSize: 13, color: "var(--text-secondary)", fontWeight: 600,
+                                cursor: p.participant_id ? "pointer" : "default",
+                                borderBottom: p.participant_id ? "1px dashed var(--border-medium)" : "none",
+                              }}
+                            >
+                              {displayName}
+                            </span>
+                            <span style={{ fontSize: 11, color: p.participant_id ? "var(--text-tertiary)" : "var(--gold)" }}>
+                              {p.participant_id ? "profile updated" : "new profile"}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <span style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: ARCHETYPE_COLORS[p.archetype] || "var(--text-primary)",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                        flexShrink: 0,
+                      }}>
+                        {p.archetype} ({Math.round(p.confidence * 100)}%)
                       </span>
                     </div>
-                    <span style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: ARCHETYPE_COLORS[p.archetype] || "var(--text-primary)",
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
-                    }}>
-                      {p.archetype} ({Math.round(p.confidence * 100)}%)
-                    </span>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}

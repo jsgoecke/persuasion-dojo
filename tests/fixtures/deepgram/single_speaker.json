@@ -1,0 +1,80 @@
+{
+  "scenario": "single_speaker",
+  "description": "Single speaker monologue, 4 utterances. No diarization needed.",
+  "streaming_events": [
+    {
+      "type": "Metadata",
+      "request_id": "emulator-single-001",
+      "model_info": {"name": "nova-2", "version": "2024-01-01"},
+      "model_uuid": "emulator"
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "start": 0.0,
+      "duration": 3.5,
+      "channel": {
+        "alternatives": [{
+          "transcript": "Good morning everyone. I want to walk you through the quarterly results.",
+          "confidence": 0.97,
+          "words": [
+            {"word": "Good", "start": 0.0, "end": 0.25, "confidence": 0.99, "speaker": 0, "punctuated_word": "Good"},
+            {"word": "morning", "start": 0.26, "end": 0.68, "confidence": 0.98, "speaker": 0, "punctuated_word": "morning"},
+            {"word": "everyone", "start": 0.69, "end": 1.15, "confidence": 0.97, "speaker": 0, "punctuated_word": "everyone."},
+            {"word": "I", "start": 1.3, "end": 1.38, "confidence": 0.99, "speaker": 0, "punctuated_word": "I"},
+            {"word": "want", "start": 1.39, "end": 1.62, "confidence": 0.98, "speaker": 0, "punctuated_word": "want"},
+            {"word": "to", "start": 1.63, "end": 1.72, "confidence": 0.99, "speaker": 0, "punctuated_word": "to"},
+            {"word": "walk", "start": 1.73, "end": 1.98, "confidence": 0.97, "speaker": 0, "punctuated_word": "walk"},
+            {"word": "you", "start": 1.99, "end": 2.12, "confidence": 0.99, "speaker": 0, "punctuated_word": "you"},
+            {"word": "through", "start": 2.13, "end": 2.42, "confidence": 0.96, "speaker": 0, "punctuated_word": "through"},
+            {"word": "the", "start": 2.43, "end": 2.52, "confidence": 0.99, "speaker": 0, "punctuated_word": "the"},
+            {"word": "quarterly", "start": 2.53, "end": 3.05, "confidence": 0.95, "speaker": 0, "punctuated_word": "quarterly"},
+            {"word": "results", "start": 3.06, "end": 3.48, "confidence": 0.97, "speaker": 0, "punctuated_word": "results."}
+          ]
+        }]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "start": 3.8,
+      "duration": 3.2,
+      "channel": {
+        "alternatives": [{
+          "transcript": "Revenue was up 18 percent year over year which exceeded our target by 3 points.",
+          "confidence": 0.96,
+          "words": [
+            {"word": "Revenue", "start": 3.8, "end": 4.25, "confidence": 0.97, "speaker": 0, "punctuated_word": "Revenue"},
+            {"word": "was", "start": 4.26, "end": 4.42, "confidence": 0.99, "speaker": 0, "punctuated_word": "was"},
+            {"word": "up", "start": 4.43, "end": 4.58, "confidence": 0.99, "speaker": 0, "punctuated_word": "up"},
+            {"word": "18", "start": 4.59, "end": 4.92, "confidence": 0.96, "speaker": 0, "punctuated_word": "18"},
+            {"word": "percent", "start": 4.93, "end": 5.32, "confidence": 0.97, "speaker": 0, "punctuated_word": "percent"},
+            {"word": "year", "start": 5.33, "end": 5.58, "confidence": 0.98, "speaker": 0, "punctuated_word": "year"},
+            {"word": "over", "start": 5.59, "end": 5.78, "confidence": 0.98, "speaker": 0, "punctuated_word": "over"},
+            {"word": "year", "start": 5.79, "end": 6.05, "confidence": 0.97, "speaker": 0, "punctuated_word": "year"}
+          ]
+        }]
+      }
+    }
+  ],
+  "rest_response": {
+    "results": {
+      "utterances": [
+        {
+          "start": 0.0,
+          "end": 3.5,
+          "transcript": "Good morning everyone. I want to walk you through the quarterly results.",
+          "speaker": 0,
+          "confidence": 0.97
+        },
+        {
+          "start": 3.8,
+          "end": 7.0,
+          "transcript": "Revenue was up 18 percent year over year which exceeded our target by 3 points.",
+          "speaker": 0,
+          "confidence": 0.96
+        }
+      ]
+    }
+  }
+}

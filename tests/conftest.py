@@ -228,3 +228,82 @@ def make_bullet():
             updated_at=now,
         )
     return _factory
+
+
+# ---------------------------------------------------------------------------
+# Deepgram emulator fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def deepgram_emulator():
+    """
+    Start a local Deepgram emulator server for the entire test session.
+
+    Yields the emulator instance (use .base_url or .ws_url for connections).
+    """
+    import os
+    from deepgram_emulator import DeepgramEmulator
+
+    fixtures_dir = os.path.join(os.path.dirname(__file__), "fixtures", "deepgram")
+    emulator = DeepgramEmulator(fixtures_dir=fixtures_dir)
+    emulator.start()
+    yield emulator
+    emulator.stop()
+
+
+@pytest.fixture
+def deepgram_connect_fn(deepgram_emulator):
+    """
+    Return an async WebSocket connect function pointed at the local emulator.
+
+    Drop-in replacement for DeepgramTranscriber(_connect_fn=...).
+    """
+    import websockets
+
+    async def connect_fn(url: str, *, additional_headers=None, **kwargs):
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        emu_parsed = urlparse(deepgram_emulator.ws_url)
+        new_url = urlunparse((
+            "ws",
+            emu_parsed.netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        ))
+        return await websockets.connect(
+            new_url,
+            additional_headers=additional_headers,
+        )
+
+    return connect_fn
+
+
+@pytest.fixture
+def deepgram_post_fn(deepgram_emulator):
+    """
+    Return an async HTTP POST function pointed at the local emulator.
+
+    Drop-in replacement for RetroImporter(_post_fn=...).
+    """
+    import httpx
+
+    async def post_fn(url: str, *, headers: dict, params: dict, content: bytes) -> dict:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        emu_parsed = urlparse(deepgram_emulator.base_url)
+        new_url = urlunparse((
+            "http",
+            emu_parsed.netloc,
+            parsed.path,
+            parsed.params,
+            "",
+            parsed.fragment,
+        ))
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(new_url, headers=headers, params=params, content=content)
+            resp.raise_for_status()
+            return resp.json()
+
+    return post_fn

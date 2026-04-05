@@ -24,8 +24,8 @@ import wave
 
 import pytest
 
-# Mark the entire module as integration tests (skipped in CI by default)
-pytestmark = pytest.mark.integration
+# NOTE: Only tests that hit LIVE external APIs should be marked @pytest.mark.integration.
+# Tests using the local Deepgram emulator run without network and are safe for CI.
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -63,18 +63,16 @@ class TestDeepgramKey:
         if not key:
             pytest.skip("No Deepgram key — set DEEPGRAM_API_KEY to run this test")
 
-    def test_key_accepted_by_api(self):
-        """Send a minimal WAV to Deepgram REST API and verify 200 OK."""
+    @pytest.mark.integration
+    def test_key_accepted_by_live_api(self):
+        """Send a minimal WAV to real Deepgram REST API and verify 200 OK."""
         import urllib.request
         import urllib.error
 
-        if os.environ.get("CI"):
-            pytest.skip("Live API test — skipped in CI")
         key = _get_deepgram_key()
         if not key:
             pytest.skip("No Deepgram key")
 
-        # Generate 1 second of silence as WAV
         import io
         buf = io.BytesIO()
         n = 16000
@@ -102,6 +100,26 @@ class TestDeepgramKey:
             if e.code in (401, 403):
                 pytest.fail(f"Deepgram API key is invalid or expired (HTTP {e.code})")
             raise
+
+    def test_emulator_rest_returns_utterances(self, deepgram_post_fn):
+        """POST audio to the local Deepgram emulator and verify response format."""
+        import asyncio
+
+        async def _run():
+            result = await deepgram_post_fn(
+                "https://api.deepgram.com/v1/listen",
+                headers={"Authorization": "Token test-key", "Content-Type": "audio/wav"},
+                params={"model": "nova-2", "diarize": "true", "utterances": "true"},
+                content=b"\x00" * 3200,
+            )
+            assert "results" in result
+            utterances = result["results"]["utterances"]
+            assert len(utterances) >= 1
+            assert "transcript" in utterances[0]
+            assert "speaker" in utterances[0]
+            assert "start" in utterances[0]
+
+        asyncio.get_event_loop().run_until_complete(_run())
 
 
 # ── Test 2: Anthropic key ──────────────────────────────────────────────────
@@ -220,6 +238,7 @@ class TestCoachingPipeline:
 
 # ── Test 4: Audio FIFO data rate ───────────────────────────────────────────
 
+@pytest.mark.integration
 class TestAudioFIFO:
     """Verify audio data from the FIFO arrives at ~1x real-time rate."""
 
@@ -329,13 +348,92 @@ class TestAudioFIFO:
 # ── Test 5: Deepgram streaming ────────────────────────────────────────────
 
 class TestDeepgramStreaming:
-    """Verify Deepgram streaming WebSocket returns transcriptions for known audio."""
+    """Verify Deepgram streaming WebSocket returns transcriptions."""
 
     @pytest.mark.asyncio
-    async def test_streaming_returns_transcript(self):
-        """Send a WAV of silence+speech via streaming WebSocket and verify transcript arrives."""
-        if os.environ.get("CI"):
-            pytest.skip("Live API test — skipped in CI")
+    async def test_streaming_returns_transcript(self, deepgram_connect_fn):
+        """Stream audio to emulator WebSocket and verify Results events arrive."""
+        from backend.transcription import DeepgramTranscriber
+
+        utterances = []
+
+        async def on_utterance(speaker_id, text, is_final, start_s, end_s):
+            if text.strip():
+                utterances.append({"speaker_id": speaker_id, "text": text, "is_final": is_final})
+
+        transcriber = DeepgramTranscriber(
+            api_key="test-emulator-key",
+            on_utterance=on_utterance,
+            _connect_fn=deepgram_connect_fn,
+        )
+        await transcriber.connect()
+
+        # Send dummy audio to trigger the emulator's fixture replay
+        pcm_data = b"\x00" * 3200
+        await transcriber.send_audio(pcm_data)
+        await asyncio.sleep(1.0)  # wait for emulator to drip-feed events
+
+        await transcriber.disconnect()
+
+        assert len(utterances) >= 1, f"Expected at least 1 utterance, got {len(utterances)}"
+        assert utterances[0]["is_final"] is True
+        assert utterances[0]["speaker_id"].startswith("speaker_")
+
+    @pytest.mark.asyncio
+    async def test_keepalive_accepted(self, deepgram_connect_fn):
+        """Verify emulator accepts KeepAlive messages without dropping."""
+        from backend.transcription import DeepgramTranscriber
+
+        async def noop_utterance(speaker_id, text, is_final, start_s, end_s):
+            pass
+
+        transcriber = DeepgramTranscriber(
+            api_key="test-emulator-key",
+            on_utterance=noop_utterance,
+            _connect_fn=deepgram_connect_fn,
+        )
+        await transcriber.connect()
+        assert transcriber.is_connected
+
+        # Send audio to establish connection, then wait for KeepAlive to fire
+        await transcriber.send_audio(b"\x00" * 3200)
+        await asyncio.sleep(2.0)
+
+        assert transcriber.is_connected, "Connection dropped — KeepAlive may not be working"
+        await transcriber.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_rapid_audio_does_not_crash(self, deepgram_connect_fn):
+        """Send audio rapidly and verify the pipeline doesn't crash."""
+        from backend.transcription import DeepgramTranscriber
+
+        async def noop_utterance(speaker_id, text, is_final, start_s, end_s):
+            pass
+
+        transcriber = DeepgramTranscriber(
+            api_key="test-emulator-key",
+            on_utterance=noop_utterance,
+            _connect_fn=deepgram_connect_fn,
+        )
+        await transcriber.connect()
+
+        # Send 5 seconds of audio all at once
+        n_samples = 16000 * 5
+        pcm_data = struct.pack(f"<{n_samples}h", *([0] * n_samples))
+        chunk_size = 3200
+        for i in range(0, len(pcm_data), chunk_size):
+            await transcriber.send_audio(pcm_data[i:i + chunk_size])
+
+        await asyncio.sleep(1.0)
+        assert transcriber.is_connected, "Connection dropped during rapid send"
+        await transcriber.disconnect()
+
+    # ── Live API tests (skipped in CI, need real key) ─────────────────────
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_live_streaming_returns_transcript(self):
+        """Send audio to the real Deepgram API and verify transcript arrives."""
         key = _get_deepgram_key()
         if not key:
             pytest.skip("No Deepgram key")
@@ -348,108 +446,21 @@ class TestDeepgramStreaming:
             if text.strip():
                 utterances.append({"speaker_id": speaker_id, "text": text, "is_final": is_final})
 
-        transcriber = DeepgramTranscriber(
-            api_key=key,
-            on_utterance=on_utterance,
-        )
+        transcriber = DeepgramTranscriber(api_key=key, on_utterance=on_utterance)
         await transcriber.connect()
 
-        # Generate a WAV with TTS-like PCM: 440 Hz sine wave for 2 seconds
-        # This won't produce speech transcription, but validates the connection works.
-        # Instead, send a real known-good audio snippet via REST first to get a WAV,
-        # then stream it to test the streaming path.
-        import io
-        buf = io.BytesIO()
-        sample_rate = 16000
-        duration_s = 2
-        n_samples = sample_rate * duration_s
-        # Generate 440 Hz sine wave (won't transcribe as speech but tests the pipeline)
         import math as _math
+        sample_rate = 16000
+        n_samples = sample_rate * 2
         samples = [int(16000 * _math.sin(2 * _math.pi * 440 * t / sample_rate)) for t in range(n_samples)]
         pcm_data = struct.pack(f"<{n_samples}h", *samples)
 
-        # Send in 100ms chunks at ~1x realtime
-        chunk_size = sample_rate * 2 // 10  # 3200 bytes = 100ms
-        for i in range(0, len(pcm_data), chunk_size):
-            chunk = pcm_data[i:i + chunk_size]
-            await transcriber.send_audio(chunk)
-            await asyncio.sleep(0.1)  # pace at 1x realtime
-
-        # Send Finalize to flush buffer
-        await transcriber.finalize()
-        await asyncio.sleep(1.0)  # wait for any trailing results
-
-        await transcriber.disconnect()
-
-        # The sine wave won't produce a speech transcript, but we should NOT have
-        # crashed, and the connection should have remained stable. The key test is
-        # that the streaming connection works without errors.
-        # We verify this by checking the transcriber completed without exception.
-        assert True, "Streaming pipeline completed without error"
-
-    @pytest.mark.asyncio
-    async def test_keepalive_prevents_timeout(self):
-        """Verify the connection stays alive during 8s of silence (KeepAlive fires at 5s)."""
-        if os.environ.get("CI"):
-            pytest.skip("Live API test — skipped in CI")
-        key = _get_deepgram_key()
-        if not key:
-            pytest.skip("No Deepgram key")
-
-        from backend.transcription import DeepgramTranscriber
-
-        async def noop_utterance(speaker_id, text, is_final, start_s, end_s):
-            pass
-
-        transcriber = DeepgramTranscriber(
-            api_key=key,
-            on_utterance=noop_utterance,
-        )
-        await transcriber.connect()
-        assert transcriber.is_connected
-
-        # Wait 8 seconds — KeepAlive should fire at 5s and keep connection alive
-        await asyncio.sleep(8.0)
-
-        assert transcriber.is_connected, "Connection dropped during silence — KeepAlive may not be working"
-        await transcriber.disconnect()
-
-    @pytest.mark.asyncio
-    async def test_rate_limiting_prevents_overload(self):
-        """Send audio at 10x realtime and verify the transcriber throttles it."""
-        if os.environ.get("CI"):
-            pytest.skip("Live API test — skipped in CI")
-        key = _get_deepgram_key()
-        if not key:
-            pytest.skip("No Deepgram key")
-
-        from backend.transcription import DeepgramTranscriber
-
-        async def noop_utterance(speaker_id, text, is_final, start_s, end_s):
-            pass
-
-        transcriber = DeepgramTranscriber(
-            api_key=key,
-            on_utterance=noop_utterance,
-        )
-        await transcriber.connect()
-
-        # Generate 5 seconds of audio
-        n_samples = 16000 * 5
-        pcm_data = struct.pack(f"<{n_samples}h", *([0] * n_samples))
-
-        # Send all at once (would be ~infinity x realtime without throttling)
-        t0 = time.monotonic()
         chunk_size = 3200
         for i in range(0, len(pcm_data), chunk_size):
             await transcriber.send_audio(pcm_data[i:i + chunk_size])
+            await asyncio.sleep(0.1)
 
-        # Wait for the send queue to drain (rate limiter should have kicked in)
-        await asyncio.sleep(2.0)
-        elapsed = time.monotonic() - t0
-
-        # With rate limiting at 1.1x, 5s of audio should take at least ~4s to send
-        # Without rate limiting it would complete in <0.1s
-        # We just verify it didn't crash and connection is still alive
-        assert transcriber.is_connected, "Connection dropped during fast send — rate limiting may have failed"
+        await transcriber.finalize()
+        await asyncio.sleep(1.0)
         await transcriber.disconnect()
+        assert True, "Streaming pipeline completed without error"

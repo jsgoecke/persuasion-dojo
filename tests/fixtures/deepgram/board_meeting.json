@@ -1,0 +1,167 @@
+{
+  "scenario": "board_meeting",
+  "description": "30s board meeting, 2 speakers. Speaker 0 = user (Architect). Speaker 1 = counterpart (Inquisitor, ego-threat signals).",
+  "streaming_events": [
+    {
+      "type": "Metadata",
+      "request_id": "emulator-board-001",
+      "model_info": {"name": "nova-2", "version": "2024-01-01"},
+      "model_uuid": "emulator"
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "start": 0.0,
+      "duration": 4.8,
+      "channel": {
+        "alternatives": [{
+          "transcript": "The data shows a 47 percent improvement in conversion rate since we restructured the funnel.",
+          "confidence": 0.98,
+          "words": [
+            {"word": "The", "start": 0.0, "end": 0.12, "confidence": 0.99, "speaker": 0, "punctuated_word": "The"},
+            {"word": "data", "start": 0.13, "end": 0.38, "confidence": 0.99, "speaker": 0, "punctuated_word": "data"},
+            {"word": "shows", "start": 0.39, "end": 0.65, "confidence": 0.98, "speaker": 0, "punctuated_word": "shows"},
+            {"word": "a", "start": 0.66, "end": 0.72, "confidence": 0.99, "speaker": 0, "punctuated_word": "a"},
+            {"word": "47", "start": 0.73, "end": 1.05, "confidence": 0.97, "speaker": 0, "punctuated_word": "47"},
+            {"word": "percent", "start": 1.06, "end": 1.42, "confidence": 0.98, "speaker": 0, "punctuated_word": "percent"},
+            {"word": "improvement", "start": 1.43, "end": 2.01, "confidence": 0.97, "speaker": 0, "punctuated_word": "improvement"},
+            {"word": "in", "start": 2.02, "end": 2.12, "confidence": 0.99, "speaker": 0, "punctuated_word": "in"},
+            {"word": "conversion", "start": 2.13, "end": 2.68, "confidence": 0.96, "speaker": 0, "punctuated_word": "conversion"},
+            {"word": "rate", "start": 2.69, "end": 2.95, "confidence": 0.98, "speaker": 0, "punctuated_word": "rate"},
+            {"word": "since", "start": 2.96, "end": 3.25, "confidence": 0.97, "speaker": 0, "punctuated_word": "since"},
+            {"word": "we", "start": 3.26, "end": 3.38, "confidence": 0.99, "speaker": 0, "punctuated_word": "we"},
+            {"word": "restructured", "start": 3.39, "end": 4.12, "confidence": 0.95, "speaker": 0, "punctuated_word": "restructured"},
+            {"word": "the", "start": 4.13, "end": 4.25, "confidence": 0.99, "speaker": 0, "punctuated_word": "the"},
+            {"word": "funnel", "start": 4.26, "end": 4.78, "confidence": 0.96, "speaker": 0, "punctuated_word": "funnel."}
+          ]
+        }]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "start": 5.2,
+      "duration": 5.1,
+      "channel": {
+        "alternatives": [{
+          "transcript": "I don't buy that. Where's the control group? We've always had seasonal variance and you're ignoring it.",
+          "confidence": 0.96,
+          "words": [
+            {"word": "I", "start": 5.2, "end": 5.3, "confidence": 0.99, "speaker": 1, "punctuated_word": "I"},
+            {"word": "don't", "start": 5.31, "end": 5.55, "confidence": 0.98, "speaker": 1, "punctuated_word": "don't"},
+            {"word": "buy", "start": 5.56, "end": 5.75, "confidence": 0.97, "speaker": 1, "punctuated_word": "buy"},
+            {"word": "that", "start": 5.76, "end": 5.98, "confidence": 0.98, "speaker": 1, "punctuated_word": "that."},
+            {"word": "Where's", "start": 6.1, "end": 6.45, "confidence": 0.96, "speaker": 1, "punctuated_word": "Where's"},
+            {"word": "the", "start": 6.46, "end": 6.55, "confidence": 0.99, "speaker": 1, "punctuated_word": "the"},
+            {"word": "control", "start": 6.56, "end": 6.95, "confidence": 0.97, "speaker": 1, "punctuated_word": "control"},
+            {"word": "group", "start": 6.96, "end": 7.25, "confidence": 0.96, "speaker": 1, "punctuated_word": "group?"},
+            {"word": "We've", "start": 7.4, "end": 7.65, "confidence": 0.95, "speaker": 1, "punctuated_word": "We've"},
+            {"word": "always", "start": 7.66, "end": 8.02, "confidence": 0.97, "speaker": 1, "punctuated_word": "always"},
+            {"word": "had", "start": 8.03, "end": 8.2, "confidence": 0.98, "speaker": 1, "punctuated_word": "had"},
+            {"word": "seasonal", "start": 8.21, "end": 8.72, "confidence": 0.94, "speaker": 1, "punctuated_word": "seasonal"},
+            {"word": "variance", "start": 8.73, "end": 9.18, "confidence": 0.93, "speaker": 1, "punctuated_word": "variance"},
+            {"word": "and", "start": 9.19, "end": 9.32, "confidence": 0.99, "speaker": 1, "punctuated_word": "and"},
+            {"word": "you're", "start": 9.33, "end": 9.55, "confidence": 0.97, "speaker": 1, "punctuated_word": "you're"},
+            {"word": "ignoring", "start": 9.56, "end": 9.98, "confidence": 0.95, "speaker": 1, "punctuated_word": "ignoring"},
+            {"word": "it", "start": 9.99, "end": 10.28, "confidence": 0.98, "speaker": 1, "punctuated_word": "it."}
+          ]
+        }]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "start": 11.0,
+      "duration": 4.5,
+      "channel": {
+        "alternatives": [{
+          "transcript": "Fair point. The control group showed 12 percent organic growth, so the net lift is 35 percent attributable to the restructure.",
+          "confidence": 0.97,
+          "words": [
+            {"word": "Fair", "start": 11.0, "end": 11.22, "confidence": 0.98, "speaker": 0, "punctuated_word": "Fair"},
+            {"word": "point", "start": 11.23, "end": 11.55, "confidence": 0.97, "speaker": 0, "punctuated_word": "point."},
+            {"word": "The", "start": 11.7, "end": 11.82, "confidence": 0.99, "speaker": 0, "punctuated_word": "The"},
+            {"word": "control", "start": 11.83, "end": 12.18, "confidence": 0.96, "speaker": 0, "punctuated_word": "control"},
+            {"word": "group", "start": 12.19, "end": 12.48, "confidence": 0.97, "speaker": 0, "punctuated_word": "group"},
+            {"word": "showed", "start": 12.49, "end": 12.82, "confidence": 0.96, "speaker": 0, "punctuated_word": "showed"},
+            {"word": "12", "start": 12.83, "end": 13.12, "confidence": 0.95, "speaker": 0, "punctuated_word": "12"},
+            {"word": "percent", "start": 13.13, "end": 13.52, "confidence": 0.97, "speaker": 0, "punctuated_word": "percent"},
+            {"word": "organic", "start": 13.53, "end": 13.98, "confidence": 0.94, "speaker": 0, "punctuated_word": "organic"},
+            {"word": "growth", "start": 13.99, "end": 14.35, "confidence": 0.96, "speaker": 0, "punctuated_word": "growth,"},
+            {"word": "so", "start": 14.36, "end": 14.48, "confidence": 0.99, "speaker": 0, "punctuated_word": "so"},
+            {"word": "the", "start": 14.49, "end": 14.58, "confidence": 0.99, "speaker": 0, "punctuated_word": "the"},
+            {"word": "net", "start": 14.59, "end": 14.78, "confidence": 0.97, "speaker": 0, "punctuated_word": "net"},
+            {"word": "lift", "start": 14.79, "end": 15.05, "confidence": 0.96, "speaker": 0, "punctuated_word": "lift"},
+            {"word": "is", "start": 15.06, "end": 15.15, "confidence": 0.99, "speaker": 0, "punctuated_word": "is"},
+            {"word": "35", "start": 15.16, "end": 15.48, "confidence": 0.95, "speaker": 0, "punctuated_word": "35"},
+            {"word": "percent", "start": 15.49, "end": 15.5, "confidence": 0.97, "speaker": 0, "punctuated_word": "percent."}
+          ]
+        }]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "start": 16.2,
+      "duration": 4.0,
+      "channel": {
+        "alternatives": [{
+          "transcript": "That's still not convincing. What about the team we lost in Q2? How do you account for the ramp-up cost?",
+          "confidence": 0.95,
+          "words": [
+            {"word": "That's", "start": 16.2, "end": 16.5, "confidence": 0.97, "speaker": 1, "punctuated_word": "That's"},
+            {"word": "still", "start": 16.51, "end": 16.78, "confidence": 0.98, "speaker": 1, "punctuated_word": "still"},
+            {"word": "not", "start": 16.79, "end": 16.95, "confidence": 0.99, "speaker": 1, "punctuated_word": "not"},
+            {"word": "convincing", "start": 16.96, "end": 17.52, "confidence": 0.95, "speaker": 1, "punctuated_word": "convincing."},
+            {"word": "What", "start": 17.7, "end": 17.88, "confidence": 0.98, "speaker": 1, "punctuated_word": "What"},
+            {"word": "about", "start": 17.89, "end": 18.15, "confidence": 0.97, "speaker": 1, "punctuated_word": "about"},
+            {"word": "the", "start": 18.16, "end": 18.25, "confidence": 0.99, "speaker": 1, "punctuated_word": "the"},
+            {"word": "team", "start": 18.26, "end": 18.55, "confidence": 0.97, "speaker": 1, "punctuated_word": "team"},
+            {"word": "we", "start": 18.56, "end": 18.65, "confidence": 0.99, "speaker": 1, "punctuated_word": "we"},
+            {"word": "lost", "start": 18.66, "end": 18.92, "confidence": 0.96, "speaker": 1, "punctuated_word": "lost"},
+            {"word": "in", "start": 18.93, "end": 19.02, "confidence": 0.99, "speaker": 1, "punctuated_word": "in"},
+            {"word": "Q2", "start": 19.03, "end": 19.42, "confidence": 0.94, "speaker": 1, "punctuated_word": "Q2?"},
+            {"word": "How", "start": 19.55, "end": 19.72, "confidence": 0.98, "speaker": 1, "punctuated_word": "How"},
+            {"word": "do", "start": 19.73, "end": 19.82, "confidence": 0.99, "speaker": 1, "punctuated_word": "do"},
+            {"word": "you", "start": 19.83, "end": 19.95, "confidence": 0.99, "speaker": 1, "punctuated_word": "you"},
+            {"word": "account", "start": 19.96, "end": 20.18, "confidence": 0.96, "speaker": 1, "punctuated_word": "account for the ramp-up cost?"}
+          ]
+        }]
+      }
+    }
+  ],
+  "rest_response": {
+    "results": {
+      "utterances": [
+        {
+          "start": 0.0,
+          "end": 4.8,
+          "transcript": "The data shows a 47 percent improvement in conversion rate since we restructured the funnel.",
+          "speaker": 0,
+          "confidence": 0.98
+        },
+        {
+          "start": 5.2,
+          "end": 10.3,
+          "transcript": "I don't buy that. Where's the control group? We've always had seasonal variance and you're ignoring it.",
+          "speaker": 1,
+          "confidence": 0.96
+        },
+        {
+          "start": 11.0,
+          "end": 15.5,
+          "transcript": "Fair point. The control group showed 12 percent organic growth, so the net lift is 35 percent attributable to the restructure.",
+          "speaker": 0,
+          "confidence": 0.97
+        },
+        {
+          "start": 16.2,
+          "end": 20.2,
+          "transcript": "That's still not convincing. What about the team we lost in Q2? How do you account for the ramp-up cost?",
+          "speaker": 1,
+          "confidence": 0.95
+        }
+      ]
+    }
+  }
+}

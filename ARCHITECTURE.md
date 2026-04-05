@@ -564,3 +564,18 @@ React + Vite inside Electron. The window is `always-on-top`, transparent backgro
 - Gold accent: `#D4A853` for coaching intelligence and CTAs
 - Typography: Playfair Display (titles) + DM Sans (body/UI) + JetBrains Mono (code/scores)
 - Never use Geist, Instrument Serif, Inter, Roboto, Arial, or Helvetica
+
+---
+
+## Known Gaps (P1 planned follow-ups)
+
+These are implemented-but-unwired subsystems. The infrastructure exists, but the integration points are not yet connected.
+
+| Gap | Impact | What exists | What's missing |
+|-----|--------|-------------|----------------|
+| **BKT session-end integration** | `skill_mastery` table stays empty — no cross-session learning | `SkillMastery` model, `bkt_update()`, `classify_skill_opportunity()` in `scoring.py` | Session-end code in `main.py` to iterate prompt effectiveness, call BKT functions, and write rows |
+| **BKT in non-ELM bullet selection** | 3 of 5 skill keys never affect prompt selection | `relevance_score()` in `coaching_bullets.py` applies BKT weight | Only fires when `bullet.elm_state` is set — `pairing:archetype_match`, `timing:talk_ratio`, `convergence:uptake` are ignored |
+| **convergence:uptake skill key** | P(know) stays at 0.1 prior forever for this skill | Skill key defined in `SKILL_KEYS` | `classify_skill_opportunity()` has no code path to emit observations from convergence signals |
+| **Debrief UI for flexibility data** | Flexibility Score, CAPS signature, and per-participant convergence are computed but invisible | All data computed and stored in DB at session end | No frontend panels to surface it in the post-session review screen |
+
+See `TODOS.md` for full descriptions and `docs/designs/situational-flexibility-architecture.md` §10 for architectural context.

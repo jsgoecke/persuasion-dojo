@@ -696,7 +696,7 @@ class TestWebSocketMultiSession:
 
         with (
             patch("backend.main.AudioPipeReader", return_value=pipe_mock),
-            patch("backend.main.DeepgramTranscriber", return_value=transcriber_mock),
+            patch("backend.main.HybridTranscriber", return_value=transcriber_mock),
             patch("backend.main._load_settings", return_value={
                 "deepgram_api_key": "test-dg-key",
             }),
@@ -832,14 +832,17 @@ class TestWebSocketMultiSession:
         r = client.get("/health")
         assert r.status_code == 200
 
-    def test_missing_deepgram_key_closes_cleanly(self, client):
+    def test_missing_deepgram_key_cloud_mode_closes_cleanly(self, client):
         """
-        If the Deepgram API key is missing, the session should close
-        immediately with an error — no dangling pipe reader.
+        If the Deepgram API key is missing in cloud mode, the session should
+        close immediately with an error — no dangling pipe reader.
+        (In auto/local mode, Moonshine fallback handles this gracefully.)
         """
         # Override the settings mock to return no key
         with patch("backend.main._load_settings", return_value={}):
-            sid = self._create_session(client)
+            r = client.post("/sessions", json={"context": "meeting", "transcription_mode": "cloud"})
+            assert r.status_code == 201
+            sid = r.json()["session_id"]
             with client.websocket_connect(f"/ws/session/{sid}") as ws:
                 data = ws.receive_json()
                 assert data["type"] == "error"

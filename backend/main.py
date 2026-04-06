@@ -117,7 +117,8 @@ from backend.self_assessment import (
 )
 from backend.sparring import SparringSession
 from backend.team_sync import TeamSync as _TeamSync, ParticipantRecord
-from backend.transcription import DeepgramTranscriber
+from backend.hybrid_transcription import HybridTranscriber, TranscriptionMode
+from backend.transcriber_protocol import Transcriber
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +333,7 @@ class CreateSessionRequest(BaseModel):
     )
     user_archetype: str | None = Field(default=None, description="User's Communicator Superpower")
     participants: list[_ParticipantInfo] = Field(default_factory=list, description="Known meeting participants")
+    transcription_mode: str = Field(default="auto", description="Transcription backend: 'auto', 'cloud', or 'local'")
 
 
 class SessionResponse(BaseModel):
@@ -433,6 +435,7 @@ async def create_session(body: CreateSessionRequest) -> SessionResponse:
                 {"name": p.name, "archetype": p.archetype}
                 for p in body.participants
             ],
+            "transcription_mode": body.transcription_mode,
         }
 
         return SessionResponse(
@@ -1161,7 +1164,7 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     Audio pipeline
     ──────────────
     On connect we start:
-      AudioPipeReader  →  DeepgramTranscriber  →  on_utterance → _handle_utterance
+      AudioPipeReader  →  HybridTranscriber  →  on_utterance → _handle_utterance
     Both are stopped when the session ends or the connection closes.
 
     If AudioPipeReader's silence watchdog fires (Swift binary stopped writing),
@@ -1178,18 +1181,22 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
 
     await ws.accept()
 
-    # ── Pre-flight: require Deepgram key before touching the audio pipeline ──
+    # Load archetype context stashed by POST /sessions
+    coaching_ctx = _session_coaching_context.pop(session_id, {})
+
+    # ── Pre-flight: check Deepgram key (soft gate in auto/local mode) ──
     deepgram_key = _load_settings().get("deepgram_api_key") or os.environ.get("DEEPGRAM_API_KEY", "")
-    if not deepgram_key:
+    transcription_mode: TranscriptionMode = coaching_ctx.get("transcription_mode", "auto")  # type: ignore[assignment]
+    if transcription_mode not in ("auto", "cloud", "local"):
+        transcription_mode = "auto"
+    if not deepgram_key and transcription_mode == "cloud":
         await ws.send_json({
             "type": "error",
-            "message": "Deepgram API key not configured. Open Settings and add your key.",
+            "message": "Deepgram API key not configured. Open Settings and add your key, or use local transcription.",
         })
         await ws.close()
         return
 
-    # Load archetype context stashed by POST /sessions
-    coaching_ctx = _session_coaching_context.pop(session_id, {})
     user_archetype = coaching_ctx.get("user_archetype")
     participants_info = coaching_ctx.get("participants", [])
 
@@ -1345,12 +1352,31 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         except Exception:
             pass  # WebSocket may already be closing
 
+    # ── Transcriber status → frontend WebSocket ──
+    async def _on_transcriber_status(event: str, detail: dict) -> None:
+        try:
+            await ws.send_json({
+                "type": "transcriber_status",
+                "event": event,
+                "detail": detail,
+            })
+        except Exception:
+            pass
+
     # Create dual transcribers: mic (no diarization) + system (with diarization)
-    mic_transcriber = DeepgramTranscriber(
-        api_key=deepgram_key, on_utterance=_on_mic_utterance, diarize=False,
+    mic_transcriber = HybridTranscriber(
+        mode=transcription_mode,
+        deepgram_api_key=deepgram_key,
+        on_utterance=_on_mic_utterance,
+        on_status=_on_transcriber_status,
+        diarize=False,
     )
-    system_transcriber = DeepgramTranscriber(
-        api_key=deepgram_key, on_utterance=_on_system_utterance, diarize=True,
+    system_transcriber = HybridTranscriber(
+        mode=transcription_mode,
+        deepgram_api_key=deepgram_key,
+        on_utterance=_on_system_utterance,
+        on_status=_on_transcriber_status,
+        diarize=True,
     )
     mic_transcriber_connected = False
     system_transcriber_connected = False
@@ -1366,7 +1392,7 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     _sys_dg_retry_after: float = 0.0
 
     def _make_audio_chunk_handler(
-        transcriber: DeepgramTranscriber,
+        transcriber: Transcriber,
         label: str,
         is_mic: bool,
     ):

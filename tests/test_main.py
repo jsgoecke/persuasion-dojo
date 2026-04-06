@@ -77,7 +77,7 @@ def stub_audio_pipeline():
 
     with (
         patch("backend.main.AudioPipeReader", return_value=pipe_mock),
-        patch("backend.main.DeepgramTranscriber", return_value=transcriber_mock),
+        patch("backend.main.HybridTranscriber", return_value=transcriber_mock),
         patch("backend.main._load_settings", return_value={
             "deepgram_api_key": "test-dg-key",
         }),
@@ -709,9 +709,14 @@ class TestWebSocketPing:
 # ---------------------------------------------------------------------------
 
 class TestWebSocketMissingDeepgramKey:
-    def test_no_deepgram_key_sends_error_and_closes(self, client):
-        """WS immediately closes with an error if Deepgram key is absent."""
-        sid = create_session(client)
+    def test_no_deepgram_key_cloud_mode_sends_error_and_closes(self, client):
+        """WS immediately closes with an error if Deepgram key is absent in cloud mode.
+
+        In auto/local mode, Moonshine fallback handles missing keys gracefully.
+        """
+        resp = client.post("/sessions", json={"context": "team", "transcription_mode": "cloud"})
+        assert resp.status_code == 201
+        sid = resp.json()["session_id"]
         with patch("backend.main._load_settings", return_value={}):
             with patch.dict("os.environ", {}, clear=False):
                 # Remove DEEPGRAM_API_KEY if present

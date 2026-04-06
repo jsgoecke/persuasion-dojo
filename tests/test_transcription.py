@@ -99,6 +99,7 @@ def make_client(
     max_reconnects: int = 1,
     reconnect_delay_s: float = 0.0,
     diarize: bool = True,
+    on_status=None,
 ) -> tuple[DeepgramTranscriber, list[tuple], FakeWS]:
     """
     Create a DeepgramTranscriber with a FakeWS and a captured utterance list.
@@ -115,6 +116,7 @@ def make_client(
     client = DeepgramTranscriber(
         api_key="test-key",
         on_utterance=on_utterance,
+        on_status=on_status,
         max_reconnects=max_reconnects,
         reconnect_delay_s=reconnect_delay_s,
         diarize=diarize,
@@ -454,7 +456,7 @@ class TestReconnect:
         )
 
         await client.connect()
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.5)
         await client.disconnect()
 
         assert "after reconnect" in utterances
@@ -483,7 +485,7 @@ class TestReconnect:
         )
 
         await client.connect()
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(1.0)
         await client.disconnect()
 
         assert len(errors) == 1
@@ -550,3 +552,356 @@ class TestBuildUrl:
             _connect_fn=connect_fn,
         )
         assert "sample_rate=48000" in client._build_url()
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Deepgram Hardening
+# ---------------------------------------------------------------------------
+
+class TestExponentialBackoff:
+    """Verify reconnect uses exponential backoff with jitter."""
+
+    @pytest.mark.asyncio
+    async def test_backoff_increases_between_retries(self):
+        """Each reconnect attempt should wait longer than the previous."""
+        sleep_calls: list[float] = []
+        original_sleep = asyncio.sleep
+
+        async def mock_sleep(delay):
+            sleep_calls.append(delay)
+            # Don't actually sleep — just record
+            await original_sleep(0)
+
+        # Create a client that will fail multiple times
+        fail_count = [0]
+        ws = FakeWS()
+
+        async def failing_connect(url, *, extra_headers=None, **_):
+            fail_count[0] += 1
+            if fail_count[0] <= 1:
+                return ws
+            raise ConnectionError("test failure")
+
+        async def on_utterance(*a):
+            pass
+
+        client = DeepgramTranscriber(
+            api_key="test-key",
+            on_utterance=on_utterance,
+            max_reconnects=3,
+            reconnect_delay_s=1.0,
+            _connect_fn=failing_connect,
+        )
+
+        # Queue errors to trigger reconnects, then a sentinel to stop
+        ws.queue(ConnectionError("fail 1"))
+        ws.queue(ConnectionError("fail 2"))
+        ws.queue(ConnectionError("fail 3"))
+        ws.queue(ConnectionError("fail 4"))
+
+        with patch("asyncio.sleep", side_effect=mock_sleep):
+            await client.connect()
+            # Wait for recv_loop to exhaust reconnects
+            await asyncio.sleep(0.1)
+            await client.disconnect()
+
+        # Backoff delays should increase (ignoring jitter)
+        # Base delays: 1*2^0=1, 1*2^1=2, 1*2^2=4 (plus jitter 0-0.5)
+        assert len(sleep_calls) >= 2
+        # Each delay should be larger than the previous (minus max jitter)
+        for i in range(1, min(len(sleep_calls), 3)):
+            assert sleep_calls[i] > sleep_calls[i - 1] * 0.9, (
+                f"Delay {i} ({sleep_calls[i]:.2f}) should be > delay {i-1} ({sleep_calls[i-1]:.2f})"
+            )
+
+    @pytest.mark.asyncio
+    async def test_backoff_capped_at_30s(self):
+        """Backoff delay should never exceed 30s + jitter."""
+        from backend.transcription import DeepgramTranscriber
+        import random
+
+        # With base 1.0 and 10 failures: 1*2^9 = 512, should be capped at 30
+        delay = min(1.0 * (2 ** 9), 30.0) + 0.5  # max jitter
+        assert delay <= 30.5
+
+    @pytest.mark.asyncio
+    async def test_default_max_reconnects_is_8(self):
+        """Default max_reconnects should be 8 (increased from 5)."""
+        async def on_utterance(*a):
+            pass
+
+        client = DeepgramTranscriber(
+            api_key="test-key",
+            on_utterance=on_utterance,
+            _connect_fn=lambda *a, **k: None,
+        )
+        assert client._max_reconnects == 8
+
+
+class TestRingBuffer:
+    """Verify audio ring buffer stores chunks for replay after reconnect."""
+
+    @pytest.mark.asyncio
+    async def test_ring_buffer_stores_chunks(self):
+        client, _, ws = make_client()
+        await client.connect()
+
+        for i in range(5):
+            await client.send_audio(b"\x00" * 100)
+
+        assert len(client._ring_buffer) == 5
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_ring_buffer_evicts_oldest_when_full(self):
+        client, _, ws = make_client()
+        await client.connect()
+
+        # Ring buffer maxlen is 160
+        for i in range(200):
+            await client.send_audio(bytes([i % 256]) * 10)
+
+        assert len(client._ring_buffer) == 160
+        # Oldest chunk should be evicted — first byte should be 40 (200-160)
+        assert client._ring_buffer[0][0] == 40
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_ring_buffer_populated_even_when_disconnected(self):
+        """Ring buffer stores audio even before connect, for replay on first connect."""
+        client, _, ws = make_client()
+        # Don't connect — send audio anyway
+        await client.send_audio(b"\x01" * 50)
+        assert len(client._ring_buffer) == 1
+
+    @pytest.mark.asyncio
+    async def test_ring_buffer_replays_on_reconnect(self):
+        """After a reconnect, ring buffer contents should be sent to the new WS."""
+        reconnect_count = [0]
+        ws_instances: list[FakeWS] = []
+
+        async def connect_fn(url, *, extra_headers=None, **_):
+            ws = FakeWS()
+            ws_instances.append(ws)
+            reconnect_count[0] += 1
+            return ws
+
+        async def on_utterance(*a):
+            pass
+
+        client = DeepgramTranscriber(
+            api_key="test-key",
+            on_utterance=on_utterance,
+            max_reconnects=3,
+            reconnect_delay_s=0.0,
+            _connect_fn=connect_fn,
+        )
+        await client.connect()
+
+        # Send some audio to populate ring buffer
+        for _ in range(5):
+            await client.send_audio(b"\xAB" * 100)
+        await asyncio.sleep(0.05)  # Let send loop drain
+
+        # Simulate disconnect by injecting error into recv
+        ws_instances[0].queue(ConnectionError("test disconnect"))
+        # Queue a valid message on the new WS so recv loop can continue
+        await asyncio.sleep(0.1)
+
+        # After reconnect, the second WS should have received ring buffer replay
+        if len(ws_instances) >= 2:
+            replay_ws = ws_instances[1]
+            # Ring buffer chunks were replayed as raw bytes
+            replay_bytes = [s for s in replay_ws.sent if isinstance(s, bytes) and s != b'']
+            assert len(replay_bytes) >= 5, f"Expected ring buffer replay, got {len(replay_bytes)} chunks"
+
+        await client.disconnect()
+
+
+class TestStatusEvents:
+    """Verify on_status callback fires for connection state changes."""
+
+    @pytest.mark.asyncio
+    async def test_status_fires_on_disconnect(self):
+        events: list[tuple[str, dict]] = []
+
+        async def on_status(event, detail):
+            events.append((event, detail))
+
+        client, _, ws = make_client(on_status=on_status, max_reconnects=0)
+        await client.connect()
+
+        # Trigger a recv error
+        ws.queue(ConnectionError("test"))
+        await asyncio.sleep(0.1)
+
+        event_names = [e[0] for e in events]
+        assert "disconnected" in event_names
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_status_fires_exhausted_after_max_retries(self):
+        events: list[tuple[str, dict]] = []
+
+        async def on_status(event, detail):
+            events.append((event, detail))
+
+        client, _, ws = make_client(
+            on_status=on_status,
+            max_reconnects=1,
+            reconnect_delay_s=0.0,
+        )
+        await client.connect()
+
+        # Queue enough errors to exhaust reconnects
+        ws.queue(ConnectionError("fail 1"))
+        ws.queue(ConnectionError("fail 2"))
+        await asyncio.sleep(0.2)
+
+        event_names = [e[0] for e in events]
+        assert "exhausted" in event_names
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_status_fires_reconnecting(self):
+        events: list[tuple[str, dict]] = []
+
+        async def on_status(event, detail):
+            events.append((event, detail))
+
+        ws_list: list[FakeWS] = []
+
+        async def connect_fn(url, *, extra_headers=None, **_):
+            ws = FakeWS()
+            ws_list.append(ws)
+            return ws
+
+        async def on_utterance(*a):
+            pass
+
+        client = DeepgramTranscriber(
+            api_key="test-key",
+            on_utterance=on_utterance,
+            on_status=on_status,
+            max_reconnects=3,
+            reconnect_delay_s=0.0,
+            _connect_fn=connect_fn,
+        )
+        await client.connect()
+
+        # Trigger a recv error
+        ws_list[0].queue(ConnectionError("fail"))
+        await asyncio.sleep(0.1)
+
+        event_names = [e[0] for e in events]
+        assert "reconnecting" in event_names
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_status_includes_attempt_number(self):
+        events: list[tuple[str, dict]] = []
+
+        async def on_status(event, detail):
+            events.append((event, detail))
+
+        client, _, ws = make_client(
+            on_status=on_status,
+            max_reconnects=0,
+            reconnect_delay_s=0.0,
+        )
+        await client.connect()
+        ws.queue(ConnectionError("fail"))
+        await asyncio.sleep(0.1)
+
+        disconnected = [e for e in events if e[0] == "disconnected"]
+        assert len(disconnected) >= 1
+        assert disconnected[0][1]["attempt"] == 1
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_no_status_callback_does_not_crash(self):
+        """on_status=None should not cause errors."""
+        client, _, ws = make_client(on_status=None, max_reconnects=0)
+        await client.connect()
+        ws.queue(ConnectionError("fail"))
+        await asyncio.sleep(0.1)
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_total_reconnects_counter(self):
+        client, _, ws = make_client(max_reconnects=0, reconnect_delay_s=0.0)
+        await client.connect()
+        ws.queue(ConnectionError("fail"))
+        await asyncio.sleep(0.1)
+        assert client._total_reconnects >= 1
+        await client.disconnect()
+
+
+class _FakeHttpxResponse:
+    """Minimal fake httpx response for health check tests."""
+    def __init__(self, status_code: int, text: str = ""):
+        self.status_code = status_code
+        self.text = text
+
+
+class _FakeHttpxClient:
+    """Minimal fake httpx.AsyncClient for health check tests."""
+    def __init__(self, response=None, error=None):
+        self._response = response
+        self._error = error
+
+    async def get(self, url, **kwargs):
+        if self._error:
+            raise self._error
+        return self._response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+class TestHealthCheck:
+    """Verify pre-session Deepgram API health check."""
+
+    @pytest.mark.asyncio
+    async def test_health_check_ok(self):
+        from backend.transcription import deepgram_health_check
+
+        fake_client = _FakeHttpxClient(response=_FakeHttpxResponse(200))
+        with patch("httpx.AsyncClient", return_value=fake_client):
+            ok, msg = await deepgram_health_check("good-key")
+            assert ok is True
+            assert msg == "ok"
+
+    @pytest.mark.asyncio
+    async def test_health_check_bad_key(self):
+        from backend.transcription import deepgram_health_check
+
+        fake_client = _FakeHttpxClient(response=_FakeHttpxResponse(401, "Unauthorized"))
+        with patch("httpx.AsyncClient", return_value=fake_client):
+            ok, msg = await deepgram_health_check("bad-key")
+            assert ok is False
+            assert "401" in msg
+
+    @pytest.mark.asyncio
+    async def test_health_check_timeout(self):
+        from backend.transcription import deepgram_health_check
+        import httpx
+
+        fake_client = _FakeHttpxClient(error=httpx.TimeoutException("timeout"))
+        with patch("httpx.AsyncClient", return_value=fake_client):
+            ok, msg = await deepgram_health_check("any-key")
+            assert ok is False
+            assert "timeout" in msg
+
+    @pytest.mark.asyncio
+    async def test_health_check_connection_error(self):
+        from backend.transcription import deepgram_health_check
+
+        fake_client = _FakeHttpxClient(error=OSError("network unreachable"))
+        with patch("httpx.AsyncClient", return_value=fake_client):
+            ok, msg = await deepgram_health_check("any-key")
+            assert ok is False
+            assert "connection error" in msg

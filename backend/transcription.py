@@ -61,21 +61,53 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
+from collections import deque
 from typing import Awaitable, Callable
+
+from backend.transcriber_protocol import (  # noqa: F401 — re-export for backward compat
+    ErrorCallback,
+    StatusCallback,
+    Transcriber,
+    UtteranceCallback,
+)
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Types
+# Deepgram health check
 # ---------------------------------------------------------------------------
 
-UtteranceCallback = Callable[
-    [str, str, bool, float, float],   # speaker_id, text, is_final, start_s, end_s
-    Awaitable[None],
-]
+_DEEPGRAM_HEALTH_URL = "https://api.deepgram.com/v1/projects"
+_HEALTH_TIMEOUT_S = 3.0
 
-ErrorCallback = Callable[[Exception], Awaitable[None]]
+
+async def deepgram_health_check(api_key: str) -> tuple[bool, str]:
+    """
+    Pre-session health check against the Deepgram API.
+
+    Returns (True, "ok") on success, (False, reason) on failure.
+    Uses httpx with a short timeout so it doesn't block session start.
+    """
+    try:
+        import httpx
+    except ImportError:
+        return True, "httpx not installed — skipping health check"
+
+    try:
+        async with httpx.AsyncClient(timeout=_HEALTH_TIMEOUT_S) as client:
+            resp = await client.get(
+                _DEEPGRAM_HEALTH_URL,
+                headers={"Authorization": f"Token {api_key}"},
+            )
+            if resp.status_code == 200:
+                return True, "ok"
+            return False, f"HTTP {resp.status_code}: {resp.text[:100]}"
+    except httpx.TimeoutException:
+        return False, "timeout"
+    except Exception as exc:
+        return False, f"connection error: {exc}"
 
 # ---------------------------------------------------------------------------
 # Deepgram endpoint
@@ -140,15 +172,17 @@ class DeepgramTranscriber:
         api_key: str | None = None,
         on_utterance: UtteranceCallback,
         on_error: ErrorCallback | None = None,
+        on_status: StatusCallback | None = None,
         sample_rate: int = 16_000,
         diarize: bool = True,
         reconnect_delay_s: float = 1.0,
-        max_reconnects: int = 5,
+        max_reconnects: int = 8,
         _connect_fn: Callable | None = None,
     ) -> None:
         self._api_key = api_key or os.environ.get("DEEPGRAM_API_KEY", "")
         self._on_utterance = on_utterance
         self._on_error = on_error
+        self._on_status = on_status
         self._sample_rate = sample_rate
         self._diarize = diarize
         self._reconnect_delay = reconnect_delay_s
@@ -161,6 +195,11 @@ class DeepgramTranscriber:
         self._recv_task: asyncio.Task | None = None
         self._send_task: asyncio.Task | None = None
         self._keepalive_task: asyncio.Task | None = None
+
+        # Ring buffer: ~5 s of 50 ms chunks for replay after reconnect
+        self._ring_buffer: deque[bytes] = deque(maxlen=160)
+        # Observability counter
+        self._total_reconnects: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -181,7 +220,10 @@ class DeepgramTranscriber:
         Enqueue a chunk of raw PCM audio for delivery to Deepgram.
 
         Thread-safe via asyncio.Queue.  Silently dropped if not connected.
+        Also stores in the ring buffer for replay after reconnects.
         """
+        if data:
+            self._ring_buffer.append(data)
         if self._connected and data:
             await self._send_queue.put(data)
 
@@ -330,7 +372,9 @@ class DeepgramTranscriber:
         """
         Receive JSON events from Deepgram and invoke on_utterance.
 
-        Handles unexpected disconnect with exponential-backoff reconnect.
+        Handles unexpected disconnect with exponential-backoff reconnect
+        (base_delay * 2^failures, capped at 30s, with random jitter).
+        On successful reconnect, replays the ring buffer to minimize lost audio.
         """
         consecutive_failures = 0
 
@@ -342,21 +386,50 @@ class DeepgramTranscriber:
                     break  # intentional disconnect
                 logger.warning("Deepgram recv error: %s", exc)
                 consecutive_failures += 1
+                self._total_reconnects += 1
+                await self._emit_status("disconnected", {
+                    "attempt": consecutive_failures,
+                    "error": str(exc),
+                })
                 if consecutive_failures > self._max_reconnects:
                     logger.error(
                         "Exhausted %d reconnect attempts — giving up",
                         self._max_reconnects,
                     )
+                    await self._emit_status("exhausted", {
+                        "total_attempts": consecutive_failures,
+                    })
                     if self._on_error:
                         await self._on_error(exc)
                     self._connected = False
                     break
 
-                await asyncio.sleep(self._reconnect_delay)
+                # Exponential backoff with jitter (jitter skipped when base delay is 0)
+                delay = min(
+                    self._reconnect_delay * (2 ** (consecutive_failures - 1)),
+                    30.0,
+                )
+                if self._reconnect_delay > 0:
+                    delay += random.uniform(0, 0.5)
+                await self._emit_status("reconnecting", {
+                    "attempt": consecutive_failures,
+                    "delay_s": round(delay, 2),
+                })
+                await asyncio.sleep(delay)
                 try:
                     await self._close_ws()
                     await self._open_connection()
                     logger.info("Deepgram reconnected (attempt %d)", consecutive_failures)
+                    await self._emit_status("reconnected", {
+                        "attempt": consecutive_failures,
+                    })
+                    # Replay ring buffer so Deepgram can re-process recent audio
+                    for chunk in self._ring_buffer:
+                        if self._ws is not None:
+                            try:
+                                await self._ws.send(chunk)
+                            except Exception:
+                                break
                 except Exception as reconnect_exc:
                     logger.warning("Reconnect failed: %s", reconnect_exc)
                 continue
@@ -364,6 +437,14 @@ class DeepgramTranscriber:
             # Successful recv — reset failure streak
             consecutive_failures = 0
             await self._handle_message(raw)
+
+    async def _emit_status(self, event: str, detail: dict) -> None:
+        """Fire the on_status callback if registered. Never raises."""
+        if self._on_status is not None:
+            try:
+                await self._on_status(event, detail)
+            except Exception:
+                pass
 
     async def _handle_message(self, raw: str | bytes) -> None:
         """Parse one JSON message from Deepgram and fire the callback."""

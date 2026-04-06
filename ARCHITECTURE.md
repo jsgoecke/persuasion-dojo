@@ -135,7 +135,7 @@ Two classes:
 **`ParticipantProfiler`** — classifies counterparts (not the user) in real time.
 - Sliding window of the last 5 utterances per speaker
 - Scores each utterance on 4 signal axes: logic, narrative, advocacy, analysis
-- Maps (focus_score, stance_score) → archetype using AND-based neutral band (both axes must be ambiguous for Undetermined, ±10 band) — looser than `self_assessment.py` OR-based logic (±15) since regex signals on real speech are sparser
+- Maps (focus_score, stance_score) → archetype using AND-based neutral band (both axes must be ambiguous for Undetermined, ±10 band) — looser than `self_assessment.py` (±15) since regex signals on real speech are sparser. When one axis is determined but the other is in the neutral band, `self_assessment.map_to_archetype()` returns partial classifications ("Logic-leaning", "Narrative-leaning", "Advocacy-leaning", "Analysis-leaning") instead of "Undetermined"
 - Carry-forward: once classified, a speaker always has a label (doesn't revert to Undetermined as window rotates)
 
 **`UserBehaviorObserver`** — accumulates all user utterances for the session.

@@ -535,8 +535,19 @@ async def delete_session(session_id: str) -> None:
         row = await db.get(MeetingSession, session_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        # Explicitly delete related rows (SQLite FK cascade not guaranteed)
+        # Delete all related rows via Core DML (avoids async lazy-load cascade
+        # issues with ORM db.delete and cascade="all, delete-orphan").
         from backend.models import session_participants
+        await db.execute(
+            delete(SessionParticipantObservation).where(
+                SessionParticipantObservation.session_id == session_id
+            )
+        )
+        await db.execute(
+            delete(BehavioralEvidence).where(
+                BehavioralEvidence.session_id == session_id
+            )
+        )
         await db.execute(
             session_participants.delete().where(session_participants.c.session_id == session_id)
         )
@@ -546,7 +557,13 @@ async def delete_session(session_id: str) -> None:
         await db.execute(
             delete(Prompt).where(Prompt.session_id == session_id)
         )
-        await db.delete(row)
+        # Use Core delete instead of ORM db.delete() to avoid async cascade
+        # lazy-load (MissingGreenlet) on prompts/utterances relationships.
+        await db.execute(
+            delete(MeetingSession).where(MeetingSession.id == session_id)
+        )
+        # Expunge the loaded ORM object so the session doesn't try to flush it.
+        db.expunge(row)
 
 
 @app.get("/calendar/watch")
@@ -881,7 +898,7 @@ async def list_participants() -> list[ParticipantResponse]:
                 id=p.id,
                 name=p.name,
                 notes=p.notes,
-                archetype=p.obs_archetype or p.ps_type,
+                archetype=p.obs_archetype if p.obs_archetype and p.obs_archetype != "Undetermined" else p.ps_type,
                 confidence=p.obs_confidence if p.obs_confidence is not None else p.ps_confidence,
                 reasoning=p.ps_reasoning,
                 sessions_observed=p.obs_sessions,
@@ -924,7 +941,7 @@ async def get_participant(participant_id: str) -> ParticipantDetailResponse:
             id=p.id,
             name=p.name,
             notes=p.notes,
-            archetype=p.obs_archetype or p.ps_type,
+            archetype=p.obs_archetype if p.obs_archetype and p.obs_archetype != "Undetermined" else p.ps_type,
             confidence=p.obs_confidence if p.obs_confidence is not None else p.ps_confidence,
             reasoning=p.ps_reasoning,
             sessions_observed=p.obs_sessions,
@@ -956,7 +973,7 @@ async def update_participant(participant_id: str, body: ParticipantUpdateRequest
             id=p.id,
             name=p.name,
             notes=p.notes,
-            archetype=p.obs_archetype or p.ps_type,
+            archetype=p.obs_archetype if p.obs_archetype and p.obs_archetype != "Undetermined" else p.ps_type,
             confidence=p.obs_confidence if p.obs_confidence is not None else p.ps_confidence,
             reasoning=p.ps_reasoning,
             sessions_observed=p.obs_sessions,
@@ -1035,7 +1052,7 @@ async def assign_participant_name(
             id=p.id,
             name=p.name,
             notes=p.notes,
-            archetype=p.obs_archetype or p.ps_type,
+            archetype=p.obs_archetype if p.obs_archetype and p.obs_archetype != "Undetermined" else p.ps_type,
             confidence=p.obs_confidence if p.obs_confidence is not None else p.ps_confidence,
             reasoning=p.ps_reasoning,
             sessions_observed=p.obs_sessions,

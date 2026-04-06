@@ -347,20 +347,20 @@ class TestMapToArchetype:
     def test_narrative_analysis_is_bridge_builder(self):
         assert map_to_archetype(-50, -50) == "Bridge Builder"
 
-    def test_neutral_focus_is_undetermined(self):
-        assert map_to_archetype(10, 50) == "Undetermined"
+    def test_neutral_focus_returns_partial(self):
+        assert map_to_archetype(10, 50) == "Advocacy-leaning"
 
-    def test_neutral_stance_is_undetermined(self):
-        assert map_to_archetype(50, 10) == "Undetermined"
+    def test_neutral_stance_returns_partial(self):
+        assert map_to_archetype(50, 10) == "Logic-leaning"
 
     def test_both_neutral_is_undetermined(self):
         assert map_to_archetype(5, -5) == "Undetermined"
 
-    def test_exactly_plus_15_is_undetermined(self):
-        assert map_to_archetype(15, 50) == "Undetermined"
+    def test_exactly_plus_15_returns_partial(self):
+        assert map_to_archetype(15, 50) == "Advocacy-leaning"
 
-    def test_exactly_minus_15_is_undetermined(self):
-        assert map_to_archetype(-15, 50) == "Undetermined"
+    def test_exactly_minus_15_returns_partial(self):
+        assert map_to_archetype(-15, 50) == "Advocacy-leaning"
 
     def test_plus_16_is_classified(self):
         assert map_to_archetype(16, 50) == "Inquisitor"
@@ -370,8 +370,8 @@ class TestMapToArchetype:
 
     def test_custom_neutral_band(self):
         """Custom neutral_band parameter is respected."""
-        # With band=30: score of 25 should be Undetermined
-        assert map_to_archetype(25, 50, neutral_band=30) == "Undetermined"
+        # With band=30: score of 25 should be partial (focus in band)
+        assert map_to_archetype(25, 50, neutral_band=30) == "Advocacy-leaning"
         # With band=10: score of 25 should be classified
         assert map_to_archetype(25, 50, neutral_band=10) == "Inquisitor"
 
@@ -419,8 +419,8 @@ class TestBuildResult:
     def test_undetermined_result_note_mentions_neutral_band(self):
         axes = _make_axes(5.0, 50.0)  # focus in neutral band
         result = build_result(axes)
-        assert result.archetype == "Undetermined"
-        assert "neutral" in result.note.lower()
+        assert result.archetype == "Advocacy-leaning"
+        assert "leaning" in result.note.lower() or "neutral" in result.note.lower()
 
     def test_in_neutral_band_updated_after_delta(self):
         """Micro-arg delta can push a borderline score out of the neutral band."""

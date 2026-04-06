@@ -718,7 +718,7 @@ export function Overlay(): React.ReactElement {
                   onClick={(e) => {
                     e.stopPropagation();
                     fetch(`http://localhost:8000/sessions/${s.session_id}`, { method: "DELETE" })
-                      .then(() => setRecentSessions(prev => prev.filter(r => r.session_id !== s.session_id)))
+                      .then(res => { if (res.ok) setRecentSessions(prev => prev.filter(x => x.session_id !== s.session_id)); })
                       .catch(() => {});
                   }}
                   style={{

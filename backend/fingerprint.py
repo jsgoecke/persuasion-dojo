@@ -345,7 +345,7 @@ async def assemble_fingerprint(
     return BehavioralFingerprint(
         participant_id=participant_id,
         name=participant.name,
-        archetype=participant.obs_archetype or participant.ps_type,
+        archetype=participant.obs_archetype if participant.obs_archetype and participant.obs_archetype != "Undetermined" else participant.ps_type,
         confidence=participant.obs_confidence if participant.obs_confidence is not None else participant.ps_confidence,
         focus_score=participant.obs_focus,
         stance_score=participant.obs_stance,

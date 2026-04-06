@@ -510,22 +510,35 @@ def classify_micro_argument(
 # Archetype mapping
 # ---------------------------------------------------------------------------
 
+# Partial classifications when one axis is determined but the other is not.
+# These communicate what we know without forcing a full archetype assignment.
+PARTIAL_ARCHETYPES = frozenset({
+    "Logic-leaning", "Narrative-leaning", "Advocacy-leaning", "Analysis-leaning",
+})
+
+
 def map_to_archetype(
     focus_score: float,
     stance_score: float,
     *,
     neutral_band: int = NEUTRAL_BAND,
-) -> SuperpowerType | Literal["Undetermined"]:
+) -> SuperpowerType | str:
     """
     Map two axis scores to an archetype.
 
-    Quadrant mapping:
+    Quadrant mapping (both axes determined):
       Logic (+) + Advocacy (+)  →  Inquisitor
       Narrative (−) + Advocacy (+)  →  Firestarter
       Logic (+) + Analysis (−)  →  Architect
       Narrative (−) + Analysis (−)  →  Bridge Builder
 
-    Scores within ±neutral_band on either axis → "Undetermined".
+    Single-axis determined:
+      Logic (+) + undetermined   →  "Logic-leaning"
+      Narrative (−) + undetermined →  "Narrative-leaning"
+      undetermined + Advocacy (+) →  "Advocacy-leaning"
+      undetermined + Analysis (−) →  "Analysis-leaning"
+
+    Both axes within ±neutral_band → "Undetermined".
 
     Parameters
     ----------
@@ -536,9 +549,16 @@ def map_to_archetype(
     focus_undetermined = abs(focus_score) <= neutral_band
     stance_undetermined = abs(stance_score) <= neutral_band
 
-    if focus_undetermined or stance_undetermined:
+    if focus_undetermined and stance_undetermined:
         return "Undetermined"
 
+    # Single-axis partial classifications
+    if focus_undetermined:
+        return "Advocacy-leaning" if stance_score > 0 else "Analysis-leaning"
+    if stance_undetermined:
+        return "Logic-leaning" if focus_score > 0 else "Narrative-leaning"
+
+    # Both axes determined — full archetype
     logic = focus_score > 0
     advocacy = stance_score > 0
 

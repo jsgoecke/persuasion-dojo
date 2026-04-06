@@ -72,10 +72,14 @@ interface Fingerprint {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const ARCHETYPE_COLORS: Record<string, string> = {
-  Architect:        "var(--gold)",
-  Firestarter:      "var(--red)",
-  Inquisitor:       "var(--green)",
-  "Bridge Builder": "var(--blue)",
+  Architect:           "var(--gold)",
+  Firestarter:         "var(--red)",
+  Inquisitor:          "var(--green)",
+  "Bridge Builder":    "var(--blue)",
+  "Logic-leaning":     "var(--gold-muted, #A08840)",
+  "Narrative-leaning": "var(--red-muted, #B07060)",
+  "Advocacy-leaning":  "var(--green-muted, #608860)",
+  "Analysis-leaning":  "var(--gold-muted, #A08840)",
 };
 
 const CONFIDENCE_LABEL = (c: number) =>

@@ -49,8 +49,9 @@ from backend.coaching_engine import CoachingPrompt
 from backend.database import init_db, override_engine, get_db_session
 from backend.main import SessionPipeline, SessionManager, app
 from backend.models import (
-    MeetingSession, Participant, Utterance,
+    MeetingSession, Participant, Prompt, Utterance,
     SessionParticipantObservation, BehavioralEvidence,
+    session_participants,
 )
 from sqlalchemy import select
 
@@ -519,6 +520,7 @@ class TestCoachingIntegration:
         assert classification.utterance_count == 5
         assert classification.superpower in (
             "Architect", "Firestarter", "Inquisitor", "Bridge Builder", "Undetermined",
+            "Logic-leaning", "Narrative-leaning", "Advocacy-leaning", "Analysis-leaning",
         )
 
     @pytest.mark.asyncio
@@ -943,7 +945,10 @@ class TestSelfAssessment:
             "responses": responses,
             "micro_argument": "Stories move people, not spreadsheets.",
         }).json()
-        valid = {"Architect", "Firestarter", "Inquisitor", "Bridge Builder", "Undetermined"}
+        valid = {
+            "Architect", "Firestarter", "Inquisitor", "Bridge Builder", "Undetermined",
+            "Logic-leaning", "Narrative-leaning", "Advocacy-leaning", "Analysis-leaning",
+        }
         assert data["archetype"] in valid
 
 
@@ -1721,3 +1726,207 @@ class TestLiveProfilePersistence:
             maria = result.scalar_one_or_none()
             assert maria is not None, "Profile for 'Maria Garcia' not found — resolver name not used"
             assert maria.ps_type is not None
+
+
+# ---------------------------------------------------------------------------
+# Regression: archetype "Undetermined" should not override valid ps_type
+# ---------------------------------------------------------------------------
+
+class TestArchetypeUndeterminedFallback:
+    """
+    Bug: obs_archetype="Undetermined" is truthy, so `obs_archetype or ps_type`
+    returns "Undetermined" instead of the valid ps_type (e.g., "Architect").
+    This happens when a speaker has signals on only one axis (the other is 0).
+    """
+
+    def test_participant_with_undetermined_obs_returns_ps_type(self, client):
+        """GET /participants should return ps_type when obs_archetype is Undetermined."""
+        async def _setup():
+            async with get_db_session() as db:
+                # Find the default user
+                from backend.models import User
+                user = (await db.execute(select(User))).scalar_one()
+                p = Participant(
+                    user_id=user.id,
+                    name="Test Archetype",
+                    ps_type="Architect",
+                    ps_confidence=0.8,
+                    obs_archetype="Undetermined",
+                    obs_focus=100.0,
+                    obs_stance=0.0,
+                    obs_sessions=1,
+                    obs_confidence=0.5,
+                )
+                db.add(p)
+                await db.flush()
+                return p.id
+        pid = asyncio.run(_setup())
+
+        resp = client.get("/participants")
+        assert resp.status_code == 200
+        profiles = resp.json()
+        match = [p for p in profiles if p["id"] == pid]
+        assert len(match) == 1
+        assert match[0]["archetype"] == "Architect", (
+            f"Expected 'Architect' but got '{match[0]['archetype']}' — "
+            "'Undetermined' obs_archetype should not override valid ps_type"
+        )
+
+    def test_participant_detail_with_undetermined_obs(self, client):
+        """GET /participants/{id} should also skip Undetermined."""
+        async def _setup():
+            async with get_db_session() as db:
+                from backend.models import User
+                user = (await db.execute(select(User))).scalar_one()
+                p = Participant(
+                    user_id=user.id,
+                    name="Detail Archetype",
+                    ps_type="Bridge Builder",
+                    ps_confidence=0.7,
+                    obs_archetype="Undetermined",
+                    obs_focus=-100.0,
+                    obs_stance=0.0,
+                    obs_sessions=1,
+                    obs_confidence=0.4,
+                )
+                db.add(p)
+                await db.flush()
+                return p.id
+        pid = asyncio.run(_setup())
+
+        resp = client.get(f"/participants/{pid}")
+        assert resp.status_code == 200
+        assert resp.json()["archetype"] == "Bridge Builder"
+
+    def test_valid_obs_archetype_takes_precedence(self, client):
+        """When obs_archetype is a real type, it should still take precedence over ps_type."""
+        async def _setup():
+            async with get_db_session() as db:
+                from backend.models import User
+                user = (await db.execute(select(User))).scalar_one()
+                p = Participant(
+                    user_id=user.id,
+                    name="Real Obs",
+                    ps_type="Architect",
+                    ps_confidence=0.6,
+                    obs_archetype="Firestarter",
+                    obs_focus=-50.0,
+                    obs_stance=50.0,
+                    obs_sessions=3,
+                    obs_confidence=0.85,
+                )
+                db.add(p)
+                await db.flush()
+                return p.id
+        pid = asyncio.run(_setup())
+
+        resp = client.get("/participants")
+        assert resp.status_code == 200
+        match = [p for p in resp.json() if p["id"] == pid]
+        assert match[0]["archetype"] == "Firestarter"
+
+
+# ---------------------------------------------------------------------------
+# Regression: DELETE /sessions/{id} must persist (not silently roll back)
+# ---------------------------------------------------------------------------
+
+class TestDeleteSessionPersists:
+    """
+    Bug: db.delete(row) with cascade="all, delete-orphan" triggered async
+    lazy-load (MissingGreenlet), rolling back the entire transaction.
+    Session appeared deleted in UI but reappeared on re-fetch.
+    """
+
+    def test_delete_session_removes_from_db(self, client):
+        """Basic delete: session should not appear in GET /sessions after DELETE."""
+        sid = _create_completed_session(client, title="Delete Me")
+
+        # Confirm it exists
+        resp = client.get("/sessions")
+        assert any(s["session_id"] == sid for s in resp.json())
+
+        # Delete
+        resp = client.delete(f"/sessions/{sid}")
+        assert resp.status_code == 204
+
+        # Confirm gone
+        resp = client.get("/sessions")
+        assert not any(s["session_id"] == sid for s in resp.json()), (
+            "Session reappeared after DELETE — transaction likely rolled back"
+        )
+
+    def test_delete_session_with_related_rows(self, client):
+        """Delete must succeed even with utterances, observations, and evidence."""
+        sid = _create_completed_session(client, title="Full Session")
+
+        async def _populate():
+            async with get_db_session() as db:
+                # Add utterances
+                db.add(Utterance(
+                    session_id=sid, sequence=0, speaker_id="speaker_0",
+                    text="Test utterance", start_s=0.0, end_s=1.0, is_user=False,
+                ))
+                # Add a participant and link to session
+                from backend.models import User
+                user = (await db.execute(select(User))).scalar_one()
+                p = Participant(
+                    user_id=user.id, name="Session Participant",
+                    ps_type="Inquisitor", ps_confidence=0.7,
+                )
+                db.add(p)
+                await db.flush()
+                # Link via session_participants
+                await db.execute(
+                    session_participants.insert().values(
+                        session_id=sid, participant_id=p.id,
+                    )
+                )
+                # Add observation
+                db.add(SessionParticipantObservation(
+                    session_id=sid, participant_id=p.id,
+                    focus_score=50.0, stance_score=-30.0,
+                    confidence=0.7, archetype="Inquisitor",
+                    utterance_count=5, context="retro",
+                ))
+                # Add behavioral evidence
+                db.add(BehavioralEvidence(
+                    session_id=sid, participant_id=p.id,
+                    context="retro",
+                ))
+                # Add a prompt
+                db.add(Prompt(
+                    session_id=sid, text="Test prompt",
+                    layer="audience", trigger="elm",
+                ))
+        asyncio.run(_populate())
+
+        # Delete should succeed even with all related rows
+        resp = client.delete(f"/sessions/{sid}")
+        assert resp.status_code == 204, (
+            f"DELETE returned {resp.status_code} — likely FK or cascade error"
+        )
+
+        # Verify session is gone
+        resp = client.get(f"/sessions/{sid}")
+        assert resp.status_code == 404
+
+        # Verify related rows are cleaned up
+        async def _verify():
+            async with get_db_session() as db:
+                obs = await db.execute(
+                    select(SessionParticipantObservation).where(
+                        SessionParticipantObservation.session_id == sid
+                    )
+                )
+                assert obs.first() is None, "SessionParticipantObservation not cleaned up"
+                ev = await db.execute(
+                    select(BehavioralEvidence).where(
+                        BehavioralEvidence.session_id == sid
+                    )
+                )
+                assert ev.first() is None, "BehavioralEvidence not cleaned up"
+        asyncio.run(_verify())
+
+    def test_delete_nonexistent_session_returns_404(self, client):
+        resp = client.delete("/sessions/nonexistent-id")
+        assert resp.status_code == 404

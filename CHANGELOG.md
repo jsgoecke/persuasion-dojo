@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.2.0] - 2026-04-05
+
+### Fixed
+- Participant profiles no longer display "Unknown" archetype when observation data exists on only one axis. The archetype fallback logic now correctly skips the truthy sentinel string "Undetermined" and falls through to the pre-seeded classification.
+- Deleting meetings from the Recent card now persists across navigation. The delete endpoint previously used ORM cascade which triggered async lazy-load errors (MissingGreenlet), silently rolling back the transaction. Now uses explicit Core DML deletes for all related rows.
+
+### Added
+- Partial archetype classifications: when one communication axis is determined but the other lacks data, profiles show "Logic-leaning", "Narrative-leaning", "Advocacy-leaning", or "Analysis-leaning" in muted colors instead of "Undetermined". Full archetype resolves as more session data accumulates.
+- 9 regression tests covering the archetype fallback logic and session delete persistence with full related-row cleanup.
+
 ## [0.9.1.0] - 2026-04-05
 
 ### Fixed

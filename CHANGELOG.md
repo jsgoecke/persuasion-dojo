@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0.0] - 2026-04-05
+
+### Added
+- Hybrid transcription: sessions now automatically fall back to local Moonshine transcription when Deepgram is unavailable. Three modes: "auto" (try cloud, fall back to local), "cloud" (Deepgram only), "local" (Moonshine only). Auto mode is the default.
+- Deepgram pre-session health check validates API key and connectivity before starting transcription. Failed health checks trigger automatic Moonshine fallback in auto mode.
+- Mid-session failover: if Deepgram exhausts reconnect attempts during a live session, audio seamlessly switches to Moonshine with a ring buffer replay of the last ~5 seconds of audio so no context is lost.
+- Exponential backoff with jitter for Deepgram reconnects (base * 2^failures, capped at 30s). Increased max reconnect attempts from 5 to 8.
+- Ring buffer (deque, ~5s of 50ms chunks) stores recent audio for replay after reconnect or failover.
+- Transcriber status events pushed to the frontend WebSocket ("using_cloud", "using_local", "fallback_activated", "reconnecting", "reconnected", "exhausted") so the overlay can show connection state.
+- `transcription_mode` parameter on session creation lets users choose their preferred transcription backend.
+
+### Changed
+- Transcriber protocol extracted to `backend/transcriber_protocol.py`, enabling swappable transcription backends without changing downstream consumers.
+- Audio pipeline in `main.py` now uses `HybridTranscriber` instead of direct `DeepgramTranscriber` instantiation.
+- Missing Deepgram API key is no longer fatal in auto/local mode. Only cloud mode requires a valid key.
+
 ## [0.9.2.0] - 2026-04-05
 
 ### Fixed

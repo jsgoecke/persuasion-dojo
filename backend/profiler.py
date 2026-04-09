@@ -208,6 +208,23 @@ def _aggregate_signals(
     return round(focus_score, 1), round(stance_score, 1), confidence
 
 
+def classify_from_scores(focus: float, stance: float) -> SuperpowerType:
+    """Map focus/stance scores to a Superpower archetype.
+
+    Assumes scores are outside the neutral band (caller must check).
+    """
+    logic = focus > 0
+    advocacy = stance > 0
+    if logic and advocacy:
+        return "Inquisitor"
+    elif not logic and advocacy:
+        return "Firestarter"
+    elif logic and not advocacy:
+        return "Architect"
+    else:
+        return "Bridge Builder"
+
+
 def _obs_confidence(utterance_count: int) -> float:
     """
     Map user utterance count to observation confidence for SessionObservation.
@@ -372,16 +389,7 @@ class ParticipantProfiler:
         if focus_in_band and stance_in_band:
             superpower: SuperpowerType | Literal["Undetermined"] = "Undetermined"
         else:
-            logic = focus > 0
-            advocacy = stance > 0
-            if logic and advocacy:
-                superpower = "Inquisitor"
-            elif not logic and advocacy:
-                superpower = "Firestarter"
-            elif logic and not advocacy:
-                superpower = "Architect"
-            else:
-                superpower = "Bridge Builder"
+            superpower = classify_from_scores(focus, stance)
 
         return WindowClassification(
             speaker_id=speaker_id,

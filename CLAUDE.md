@@ -29,6 +29,9 @@ persuasion-dojo/
 │   ├── main.py              # FastAPI app + WebSocket server
 │   ├── audio.py             # Named pipe reader (Swift → Python audio stream)
 │   ├── transcription.py     # Deepgram streaming client (WebSocket lifecycle)
+│   ├── transcriber_protocol.py  # Transcriber Protocol (swappable backends)
+│   ├── moonshine_transcription.py # Local Moonshine ASR fallback
+│   ├── hybrid_transcription.py  # Hybrid transcriber (cloud + local failover)
 │   ├── profiler.py          # Participant Superpower profiler (rule-based, 5-utterance window)
 │   ├── elm_detector.py      # ELM state detection (ego-threatened / shortcut / consensus)
 │   ├── coaching_engine.py   # Claude Haiku prompt generation (3-layer: self/audience/group)
@@ -88,7 +91,7 @@ persuasion-dojo/
 - **Privacy:** participant profiles stored locally (SQLite); Claude API processes transcript text — disclose in first-run wizard. Team JSON export is AES-256 encrypted (passphrase required to import). Corporate MDM may block Screen Recording permission; V1 targets personal Mac users.
 - **Convergence scoring:** pre-build spike required — annotate 5-10 real transcripts, verify signals ≥75% before building `scoring.py`. If fails: replace Persuasion Score with Session Summary. Pre-seed accuracy gate: classify ≥70% of 5 known profiles correctly before deploying `pre_seeding.py`.
 - **Build order:** dev-sign Swift binary → ScreenCaptureKit PoC (SCK audio, not clean recordings) → full notarization CI → distribution
-- **Coaching cadence:** ELM-triggered prompts: 10s minimum floor. General prompts (self/group): 60s floor. Both suppressed while user is mid-utterance (wait 500ms silence after `is_final`).
+- **Coaching cadence:** ELM-triggered prompts: 10s minimum floor (counterpart utterances only). General prompts (self/group): 15s floor, fires on both user and counterpart utterances so self-coaching ("you've been advocating too long") works.
 - **Fallback indicator:** When Haiku times out (1.5s) and fallback fires, overlay shows subtle `↻ cached` badge on the prompt.
 - **SCK permission check:** Check Screen Recording permission at session start (not just first-run). bundle signature change on update may silently revoke permission.
 - **Swift binary supervision:** Python tracks last audio timestamp. If silent >5s (pipe dead), Python sends restart signal to Electron, which restarts the Swift binary.
@@ -130,12 +133,16 @@ tests/
 ├── test_calendar_service.py  # Token refresh, participant matching
 ├── test_team_sync.py         # Export, import, malformed JSON validation
 ├── test_bkt.py               # BKT convergence, skill opportunity classification, adversarial inputs
+├── test_phase1_signal_chain.py  # Echo filter, plain English coaching, per-person coaching (50 tests)
+├── test_calendar_auto_seed.py   # Calendar auto-seed at session start
+├── test_hybrid_transcription.py # Hybrid transcriber failover logic
+├── test_moonshine_transcription.py # Local Moonshine transcriber
 └── evals/
     ├── coaching_prompts.py   # 10 fixtures: Superpower × ELM state → expected prompt properties
     └── pre_seeding.py        # Pre-seed classification from text/email/bio inputs
 ```
 
-Run `pytest` for the full backend suite (1060+ tests, ~45s).
+Run `pytest` for the full backend suite (1298+ tests, ~65s).
 
 ## Target user
 

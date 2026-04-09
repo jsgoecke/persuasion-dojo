@@ -122,6 +122,7 @@ class Meeting:
     start_dt: datetime
     end_dt: datetime
     attendee_emails: list[str] = field(default_factory=list)
+    attendee_names: list[str] = field(default_factory=list)
     meeting_url: str | None = None
 
 
@@ -559,10 +560,15 @@ def _parse_event(item: dict) -> Meeting | None:
     if start_dt is None or end_dt is None:
         return None
 
-    attendees: list[str] = [
-        a["email"]
-        for a in item.get("attendees", [])
+    raw_attendees = [
+        a for a in item.get("attendees", [])
         if "email" in a and not a.get("self", False)
+    ]
+    attendees: list[str] = [a["email"] for a in raw_attendees]
+    # Google Calendar includes displayName when available; fall back to email local part
+    attendee_names: list[str] = [
+        a.get("displayName") or a["email"].split("@")[0].replace(".", " ").title()
+        for a in raw_attendees
     ]
 
     meeting_url = _extract_meeting_url(item)
@@ -573,6 +579,7 @@ def _parse_event(item: dict) -> Meeting | None:
         start_dt=start_dt,
         end_dt=end_dt,
         attendee_emails=attendees,
+        attendee_names=attendee_names,
         meeting_url=meeting_url,
     )
 

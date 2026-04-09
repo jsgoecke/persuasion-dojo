@@ -403,8 +403,9 @@ class TestCoachingIntegration:
         assert result.is_fallback is False
 
     @pytest.mark.asyncio
-    async def test_user_utterance_produces_no_prompt(self):
-        """User utterances are suppressed — no coaching prompt fires."""
+    async def test_user_utterance_fires_self_layer_prompt(self):
+        """User utterances trigger self-layer coaching (e.g. 'you've been
+        advocating too long — ask a question')."""
         p = self._make_pipeline()
 
         result = await p.process_utterance(
@@ -412,7 +413,8 @@ class TestCoachingIntegration:
             text="I think we should reconsider this approach.",
             is_final=True,
         )
-        assert result is None
+        assert result is not None
+        assert result.layer == "self"
 
     @pytest.mark.asyncio
     async def test_counterpart_general_prompt_fires(self):
@@ -441,17 +443,19 @@ class TestCoachingIntegration:
         assert len(results) > 0, "Expected at least one coaching prompt from counterpart speech"
 
     @pytest.mark.asyncio
-    async def test_mixed_speakers_only_counterpart_fires(self):
-        """In a mixed conversation, only counterpart turns produce prompts."""
+    async def test_mixed_speakers_all_turns_can_fire(self):
+        """In a mixed conversation, both user and counterpart turns produce prompts.
+        User turns fire self-layer; counterpart turns fire ELM or general."""
         p = self._make_pipeline()
 
         prompts = []
 
-        # User speaks
+        # User speaks — self-layer fires
         r = await p.process_utterance(
             speaker_id="user", text="What do you think about the Q3 numbers?", is_final=True,
         )
-        assert r is None
+        if r:
+            prompts.append(("user", r))
 
         # Counterpart speaks (ego threat)
         r = await p.process_utterance(
@@ -460,13 +464,14 @@ class TestCoachingIntegration:
             is_final=True,
         )
         if r:
-            prompts.append(r)
+            prompts.append(("counterpart", r))
 
-        # User speaks again
+        # User speaks again — self-layer fires
         r = await p.process_utterance(
             speaker_id="user", text="Let me show you the breakdown.", is_final=True,
         )
-        assert r is None
+        if r:
+            prompts.append(("user", r))
 
         # Counterpart speaks again
         r = await p.process_utterance(
@@ -475,10 +480,10 @@ class TestCoachingIntegration:
             is_final=True,
         )
         if r:
-            prompts.append(r)
+            prompts.append(("counterpart", r))
 
-        assert len(prompts) > 0, "Expected coaching prompts from counterpart utterances"
-        for pr in prompts:
+        assert len(prompts) > 0, "Expected coaching prompts from mixed conversation"
+        for source, pr in prompts:
             assert pr.text
             assert pr.is_fallback is False
 
@@ -849,6 +854,18 @@ class TestWebSocketSessionEnd:
                 # Server closed — next receive raises
                 with pytest.raises(Exception):
                     ws.receive_text()
+
+    def test_session_end_sends_fallback_when_handler_crashes(self, client):
+        """Regression: if _handle_session_end raises, a fallback session_ended
+        must still be sent so the frontend shows the debrief screen."""
+        sid = create_session(client)
+
+        with patch("backend.main._handle_session_end", side_effect=RuntimeError("scoring crash")):
+            with client.websocket_connect(f"/ws/session/{sid}") as ws:
+                ws.send_json({"type": "session_end"})
+                data = ws.receive_json()
+                assert data["type"] == "session_ended"
+                assert data["session_id"] == sid
 
     def test_empty_session_deleted_from_db(self, client):
         """An empty session (no utterances) is deleted after session_end."""

@@ -113,10 +113,12 @@ function ProfileCard({
   profile,
   onSelect,
   onDelete,
+  badge,
 }: {
   profile: ParticipantSummary;
   onSelect: () => void;
   onDelete: () => void;
+  badge?: "add" | "added";
 }): React.ReactElement {
   const color = ARCHETYPE_COLORS[profile.archetype ?? ""] ?? "var(--text-tertiary)";
   const displayName = profile.name || "Unknown";
@@ -226,40 +228,61 @@ function ProfileCard({
         )}
       </button>
 
-      {/* Delete button — appears on hover */}
-      <button
-        data-profile-delete
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-        style={{
-          position: "absolute",
-          right: -4,
-          top: "50%",
-          transform: "translateY(-50%)",
-          opacity: 0,
-          background: "var(--bg-card)",
-          border: "1px solid var(--border-medium)",
-          borderRadius: "50%",
-          width: 24,
-          height: 24,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          color: "var(--text-tertiary)",
-          fontSize: 14,
-          lineHeight: 1,
-          transition: "opacity 150ms ease, color 150ms ease, border-color 150ms ease",
-          padding: 0,
-        }}
-        onMouseEnter={e => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "var(--red)"; e.currentTarget.style.borderColor = "var(--red)"; }}
-        onMouseLeave={e => { e.currentTarget.style.color = "var(--text-tertiary)"; e.currentTarget.style.borderColor = "var(--border-medium)"; }}
-        title="Delete profile"
-      >
-        ×
-      </button>
+      {/* Session picker badge OR delete button */}
+      {badge ? (
+        <div
+          style={{
+            position: "absolute",
+            right: 8,
+            top: "50%",
+            transform: "translateY(-50%)",
+            fontFamily: "var(--font-body)",
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "3px 10px",
+            borderRadius: 12,
+            ...(badge === "added"
+              ? { background: "var(--green-bg, rgba(34,197,94,0.1))", color: "var(--green, #22c55e)" }
+              : { background: "var(--gold-bg)", color: "var(--gold)" }),
+          }}
+        >
+          {badge === "added" ? "✓ Added" : "+ Add"}
+        </div>
+      ) : (
+        <button
+          data-profile-delete
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          style={{
+            position: "absolute",
+            right: -4,
+            top: "50%",
+            transform: "translateY(-50%)",
+            opacity: 0,
+            background: "var(--bg-card)",
+            border: "1px solid var(--border-medium)",
+            borderRadius: "50%",
+            width: 24,
+            height: 24,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            color: "var(--text-tertiary)",
+            fontSize: 14,
+            lineHeight: 1,
+            transition: "opacity 150ms ease, color 150ms ease, border-color 150ms ease",
+            padding: 0,
+          }}
+          onMouseEnter={e => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "var(--red)"; e.currentTarget.style.borderColor = "var(--red)"; }}
+          onMouseLeave={e => { e.currentTarget.style.color = "var(--text-tertiary)"; e.currentTarget.style.borderColor = "var(--border-medium)"; }}
+          title="Delete profile"
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }
@@ -738,9 +761,13 @@ function ProfileDetail({
 
 export interface ProfilesPaneProps {
   onBack: () => void;
+  /** When provided, profiles become selectable for a session. Clicking a profile calls this instead of navigating to detail. */
+  onAddToSession?: (profile: { id: string; name: string; archetype: string }) => void;
+  /** IDs of profiles already added to the session (shown as already-selected). */
+  selectedIds?: string[];
 }
 
-export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement {
+export function ProfilesPane({ onBack, onAddToSession, selectedIds }: ProfilesPaneProps): React.ReactElement {
   const [profiles, setProfiles] = useState<ParticipantSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1017,45 +1044,61 @@ export function ProfilesPane({ onBack }: ProfilesPaneProps): React.ReactElement 
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {profiles.map(p => (
-            <React.Fragment key={p.id}>
-              <ProfileCard
-                profile={p}
-                onSelect={() => setSelectedId(p.id)}
-                onDelete={() => setPendingDeleteId(p.id)}
-              />
-              {pendingDeleteId === p.id && (
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  background: "rgba(239,68,68,0.06)", borderRadius: 8, padding: "8px 12px",
-                }}>
-                  <span style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--red)", flex: 1 }}>
-                    Delete {p.name || "this profile"}?
-                  </span>
-                  <button
-                    onClick={() => void handleListDelete(p.id)}
-                    style={{
-                      background: "var(--red)", border: "none", borderRadius: 8,
-                      padding: "4px 12px", cursor: "pointer",
-                      fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 500, color: "#fff",
-                    }}
-                  >
-                    Delete
-                  </button>
-                  <button
-                    onClick={() => setPendingDeleteId(null)}
-                    style={{
-                      background: "none", border: "1px solid var(--border-medium)", borderRadius: 8,
-                      padding: "4px 12px", cursor: "pointer",
-                      fontFamily: "var(--font-body)", fontSize: 12, color: "var(--text-secondary)",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
-            </React.Fragment>
-          ))}
+          {profiles.map(p => {
+            const alreadyAdded = selectedIds?.includes(p.id) ?? false;
+            return (
+              <React.Fragment key={p.id}>
+                <ProfileCard
+                  profile={p}
+                  onSelect={() => {
+                    if (onAddToSession) {
+                      if (!alreadyAdded) {
+                        onAddToSession({
+                          id: p.id,
+                          name: p.name || "Unknown",
+                          archetype: p.archetype || "Unknown",
+                        });
+                      }
+                    } else {
+                      setSelectedId(p.id);
+                    }
+                  }}
+                  onDelete={onAddToSession ? () => {} : () => setPendingDeleteId(p.id)}
+                  badge={onAddToSession ? (alreadyAdded ? "added" : "add") : undefined}
+                />
+                {!onAddToSession && pendingDeleteId === p.id && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    background: "rgba(239,68,68,0.06)", borderRadius: 8, padding: "8px 12px",
+                  }}>
+                    <span style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--red)", flex: 1 }}>
+                      Delete {p.name || "this profile"}?
+                    </span>
+                    <button
+                      onClick={() => void handleListDelete(p.id)}
+                      style={{
+                        background: "var(--red)", border: "none", borderRadius: 8,
+                        padding: "4px 12px", cursor: "pointer",
+                        fontFamily: "var(--font-body)", fontSize: 12, fontWeight: 500, color: "#fff",
+                      }}
+                    >
+                      Delete
+                    </button>
+                    <button
+                      onClick={() => setPendingDeleteId(null)}
+                      style={{
+                        background: "none", border: "1px solid var(--border-medium)", borderRadius: 8,
+                        padding: "4px 12px", cursor: "pointer",
+                        fontFamily: "var(--font-body)", fontSize: 12, color: "var(--text-secondary)",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })}
         </div>
       )}
     </div>

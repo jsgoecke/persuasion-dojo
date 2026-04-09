@@ -58,11 +58,15 @@ If the Screen Recording permission is revoked (macOS silently revokes it on bund
 
 ### Deepgram streaming
 
-Each pipe feeds its own Deepgram WebSocket session in `backend/transcription.py`:
+Each pipe feeds its own transcriber instance via `backend/hybrid_transcription.py`, which wraps Deepgram (primary) and Moonshine (local fallback). Three modes: "auto" (try cloud, fall back to local), "cloud" (Deepgram only), "local" (Moonshine only). Auto is the default.
+
+The Deepgram path in `backend/transcription.py`:
 - **System transcriber** (diarization ON) — counterpart audio. Deepgram labels speakers `speaker_0`, `speaker_1`, etc. The session handler prefixes these as `counterpart_0`, `counterpart_1`.
 - **Mic transcriber** (diarization OFF) — user audio. All utterances get speaker ID `"user"`.
 
 Deepgram returns `is_final: true` for committed utterances and `is_final: false` for interim partials. Only `is_final` utterances feed the coaching pipeline.
+
+**Echo filter:** ScreenCaptureKit captures ALL system audio, including the user's own voice from the call. Without filtering, the user appears as both `"user"` (mic) and `"counterpart_N"` (system audio). The `is_echo()` function in `main.py` uses word set overlap (≥60% threshold) against the last 10 mic utterances to detect and drop these duplicate system utterances. Short utterances (<3 words) are exempt to avoid false positives on common phrases.
 
 ### Audio lifecycle (session start/end)
 
@@ -156,8 +160,14 @@ Two classes:
 - Overlay renders a `↻ cached` badge on fallback prompts
 - If no cached prompt exists yet: returns `None` (no prompt shown)
 
+**Plain English constraint:**
+All coaching prompts use plain, simple English. No academic terms (ELM, Central Route, Peripheral Route, ego safety, cognitive load). The ELM detection logic runs unchanged under the hood, but user-facing language translates states to plain descriptions: "getting defensive" instead of "ego_threat", "going along but not engaged" instead of "shortcut mode".
+
+**Per-person coaching:**
+Prompts name the specific counterpart and tailor advice to their Superpower archetype pairing with the user. Example: "Sarah is an Inquisitor — lead with data" instead of generic tips.
+
 **Prompt structure:**
-System prompt locks the format to: `<WHY clause ≤8 words> — <ACTION ≤12 words, verb-first>`.
+System prompt locks the format to: `<WHY clause ≤8 words, naming the person> — <ACTION ≤12 words, verb-first>`.
 Max tokens: 80 (≈25 words). No preamble, no labels, no quotes.
 
 **Archetype pairing advice:**
@@ -288,6 +298,7 @@ Processes recorded audio files (`.wav`, `.m4a`, `.mp3`) through Deepgram's REST 
 {"type": "swift_restart_needed"}
 {"type": "audio_level", "level": 0.42}
 {"type": "no_audio", "message": "No audio detected. ..."}
+{"type": "transcriber_status", "event": "using_cloud|using_local|fallback_activated|reconnecting|reconnected|exhausted", "detail": "..."}
 {"type": "error", "message": "..."}
 ```
 

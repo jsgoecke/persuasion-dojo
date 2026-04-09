@@ -9,10 +9,12 @@ Three-layer coaching architecture (evaluated each trigger):
 Priority and cadence floors
 ────────────────────────────
   ELM-triggered (ego_threat / consensus_protection / shortcut)  10 s floor
-  General cadence (self / group)                                 60 s floor
+  General cadence (self / group)                                 15 s floor
 
-Both suppressed while user_is_speaking=True (overlay waits 500 ms of
-silence after Deepgram is_final before polling this engine).
+ELM prompts suppressed while user_is_speaking (audience-layer needs
+counterpart context). Self-layer general prompts fire on user utterances
+too — this is how "you've been advocating too long, ask a question"
+works.
 
 Fallback
 ─────────
@@ -46,17 +48,22 @@ CoachingLayer = Literal["self", "audience", "group"]
 _SYSTEM_PROMPT = (
     "You are a $500/hr executive communication coach embedded in a live meeting overlay. "
     "You use the Communicator Superpower framework:\n"
-    "- Architect (Logic+Analyze): needs data, structure, evidence before moving.\n"
-    "- Firestarter (Narrative+Advocate): leads with energy, story, vision.\n"
-    "- Inquisitor (Logic+Advocate): challenges everything, needs proof.\n"
-    "- Bridge Builder (Narrative+Analyze): reads the room, builds consensus.\n\n"
-    "ELM context: Central Route = processing through logic/evidence. "
-    "Peripheral Route = responding to cues/authority/social proof. "
-    "Ego-threatened = Central Route shut down, defensive.\n\n"
-    "Output EXACTLY ONE coaching tip. Format: a short WHY clause (≤8 words, "
-    "naming the dynamic) followed by a dash and the ACTION (≤12 words, verb-first imperative). "
-    "Example: 'She's in Central Route — anchor your next point in a number.'\n"
-    "No preamble, no labels, no quotes. Output only the tip."
+    "- Architect: needs data, structure, evidence before moving.\n"
+    "- Firestarter: leads with energy, story, vision.\n"
+    "- Inquisitor: challenges everything, needs proof.\n"
+    "- Bridge Builder: reads the room, builds consensus.\n\n"
+    "Output EXACTLY ONE coaching tip in plain, simple English. "
+    "No jargon, no academic terms, no framework labels. "
+    "Write like you're texting a friend quick advice during a meeting.\n\n"
+    "Format: a short WHY clause (≤8 words, "
+    "naming the specific person) followed by a dash and the ACTION (≤12 words, verb-first imperative). "
+    "Always name the specific person in your tip when a name is provided. "
+    "Example: 'Sarah needs proof — lead with a specific number.'\n"
+    "Example: 'Mike is getting defensive — acknowledge his point first, then redirect.'\n"
+    "Example: 'The group is going along to get along — ask what concerns haven't been raised.'\n"
+    "No preamble, no labels, no quotes. Never use terms like 'ego safety', "
+    "'peripheral route', 'central route', 'ELM', 'cognitive load', or 'processing mode'. "
+    "Output only the tip."
 )
 
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -65,15 +72,15 @@ _FLEX_NOTE_ENABLED = True  # Killswitch: set False to suppress flexibility notes
 
 # Human-readable labels for ELM states used in prompts
 _ELM_STATE_DESCRIPTION: dict[str, str] = {
-    "ego_threat": "defensive / identity-threatened",
-    "shortcut": "agreeing without real engagement",
-    "consensus_protection": "closing down dissent prematurely",
+    "ego_threat": "getting defensive, feels personally attacked",
+    "shortcut": "nodding along but not actually engaged",
+    "consensus_protection": "shutting down disagreement too early",
 }
 
 _ELM_COACHING_GOAL: dict[str, str] = {
-    "ego_threat": "de-escalate and restore psychological safety",
-    "shortcut": "invite real engagement and surface their concerns",
-    "consensus_protection": "open up space for healthy dissent",
+    "ego_threat": "make them feel heard so they can think clearly again",
+    "shortcut": "get them to share what they really think",
+    "consensus_protection": "make it safe for someone to disagree",
 }
 
 
@@ -169,7 +176,7 @@ class CoachingEngine:
         user_speaker: str,
         anthropic_client: AsyncAnthropic | None = None,
         elm_cadence_floor_s: float = 10.0,
-        general_cadence_floor_s: float = 30.0,
+        general_cadence_floor_s: float = 15.0,
         haiku_timeout_s: float = 1.5,
         model: str = _DEFAULT_MODEL,
         user_archetype: str | None = None,
@@ -195,6 +202,109 @@ class CoachingEngine:
         # Bullet IDs from the most recent context selection (set per prompt cycle)
         self._last_bullet_ids: str = ""
 
+    @property
+    def user_archetype(self) -> str:
+        return self._user_archetype
+
+    @user_archetype.setter
+    def user_archetype(self, value: str) -> None:
+        self._user_archetype = value
+
+    # ------------------------------------------------------------------
+    # Initial session prompt
+    # ------------------------------------------------------------------
+
+    async def initial_prompt(
+        self,
+        *,
+        user_profile: ProfileSnapshot | None = None,
+        user_display_name: str = "",
+        meeting_title: str = "",
+    ) -> CoachingPrompt | None:
+        """
+        Generate a welcome coaching prompt at session start.
+
+        Fires once when the session connects, before any utterances.
+        Incorporates: user name, archetype profile, meeting context,
+        known participants with pairing advice, and learned coaching bullets.
+        """
+        user_type = (
+            user_profile.archetype if user_profile and user_profile.archetype != "Undetermined"
+            else self._user_archetype
+        )
+
+        # User identity and profile context
+        name_line = f"The user's name is {user_display_name}." if user_display_name else ""
+        profile_line = f"You are a {user_type}."
+        if user_profile and user_profile.context_shifts:
+            profile_line += (
+                f" In most meetings you're a {user_profile.core_archetype}, "
+                f"but in {user_profile.context} settings you shift toward {user_type}."
+            )
+        confidence_line = ""
+        if user_profile and user_profile.core_sessions >= 3:
+            confidence_line = (
+                f"Based on {user_profile.core_sessions} sessions observed."
+            )
+
+        # Meeting context
+        meeting_note = f'Meeting: "{meeting_title}"' if meeting_title else ""
+
+        # Build participant roster with pairing dynamics
+        participants_section = ""
+        if self._participants:
+            roster = []
+            for p in self._participants:
+                pname = p.get("name", "Unknown")
+                arch = p.get("archetype", "Unknown")
+                pairing = self._enriched_pairing_advice(arch, pname)
+                fp = p.get("fingerprint")
+                if fp:
+                    sessions = fp.get("sessions_observed", 0)
+                    patterns = fp.get("patterns", [])
+                    summary = f"{pname} is a {arch} ({sessions} prior sessions)"
+                    if patterns:
+                        summary += f". Pattern: {patterns[0]}"
+                    roster.append(f"  - {summary}. {pairing}")
+                else:
+                    roster.append(f"  - {pname} is a {arch}. {pairing}")
+            participants_section = (
+                "People in this meeting:\n"
+                + "\n".join(roster) + "\n"
+            )
+
+        # Include learned coaching context from prior sessions
+        playbook_section = ""
+        self._last_bullet_ids = ""
+        if self._user_id:
+            ctx, bullet_ids = await self._load_coaching_context("Unknown")
+            if ctx:
+                playbook_section = f"{ctx}\n"
+            if bullet_ids:
+                self._last_bullet_ids = ",".join(bullet_ids)
+
+        user_msg = (
+            f"{name_line}\n"
+            f"{profile_line}\n"
+            f"{confidence_line}\n"
+            f"{meeting_note}\n\n"
+            f"{participants_section}\n"
+            f"{playbook_section}\n"
+            "This is the start of a session. Generate an opening coaching tip.\n"
+            "RULES:\n"
+            f"- Address the user by their first name ({(user_display_name.split()[0] if user_display_name.split() else 'there') if user_display_name else 'there'}).\n"
+            "- If participants are listed, name the person who will be hardest "
+            "to persuade and give ONE specific thing to do in the first 2 minutes "
+            "based on the pairing between the user's type and that person's type.\n"
+            "- If no participants are listed, give a readiness tip based on the "
+            "user's archetype tendencies.\n"
+            "- Keep it warm, direct, and actionable. One or two sentences max."
+        )
+        prompt = await self._call_haiku("self", user_msg, "session:start", "")
+        if prompt:
+            self._last_prompt_time = time.monotonic()
+        return prompt
+
     # ------------------------------------------------------------------
     # Core processor
     # ------------------------------------------------------------------
@@ -215,20 +325,20 @@ class CoachingEngine:
         Pass None for elm_event on regular cadence ticks.
 
         Returns None when:
-          - user_is_speaking is True
+          - user_is_speaking AND cadence floor not reached (self-layer still fires)
           - the applicable cadence floor has not elapsed
           - Haiku fails AND no cached prompt exists for that layer
         """
-        if user_is_speaking:
-            return None
-
         now = time.monotonic()
 
-        if elm_event is not None:
+        if elm_event is not None and not user_is_speaking:
+            # ELM prompts (audience-layer) only fire on counterpart utterances
             if now - self._last_prompt_time < self._elm_floor:
                 return None
             prompt = await self._elm_prompt(elm_event, participant_profile, user_profile)
         else:
+            # Self-layer general prompts fire on BOTH user and counterpart utterances.
+            # This is how "you've been advocating for 4 minutes — ask a question" works.
             if now - self._last_prompt_time < self._general_floor:
                 return None
             prompt = await self._general_prompt(
@@ -272,18 +382,7 @@ class CoachingEngine:
         goal = _ELM_COACHING_GOAL.get(state, "improve the conversation")
 
         # Build counterpart-specific advice based on archetype pairing + effectiveness + fingerprint
-        counterpart_name = ""
-        if participant:
-            # Try to find the name from participants list by speaker index
-            try:
-                if event.speaker_id.startswith("counterpart_"):
-                    idx = int(event.speaker_id.replace("counterpart_", ""))
-                else:
-                    idx = int(event.speaker_id.replace("speaker_", "")) - 1
-                if 0 <= idx < len(self._participants):
-                    counterpart_name = self._participants[idx].get("name", "")
-            except (ValueError, IndexError):
-                pass
+        counterpart_name = self._resolve_speaker_name(event.speaker_id)
         pairing_note = self._enriched_pairing_advice(counterpart_type, counterpart_name)
 
         # Include learned coaching context from prior sessions (ACE bullet store)
@@ -298,24 +397,30 @@ class CoachingEngine:
             if bullet_ids:
                 self._last_bullet_ids = ",".join(bullet_ids)
 
-        # Determine processing route from ELM state
+        # Plain-English situation description (no academic jargon)
         if state == "ego_threat":
-            route_note = "Their Central Route is SHUT DOWN — logic won't land. You need to restore safety first."
+            route_note = "They feel attacked — logic won't land right now. Acknowledge their point first."
         elif state == "shortcut":
-            route_note = "They're in Peripheral Route — agreeing on autopilot, not actually processing. Surface something real."
+            route_note = "They're agreeing on autopilot, not actually thinking it through. Ask something specific."
         elif state == "consensus_protection":
-            route_note = "The group is suppressing dissent — someone has a concern they're not voicing. Create space."
+            route_note = "The group is rushing to agree — someone has a concern they're not saying. Make space."
         else:
             route_note = ""
 
+        # Build counterpart label: "Sarah (Architect)" or just "Architect" if no name
+        counterpart_label = (
+            f"{counterpart_name} ({counterpart_type})" if counterpart_name
+            else counterpart_type
+        )
+
         user_msg = (
-            f"Counterpart: {counterpart_type} ({state_desc})\n"
-            f"Processing route: {route_note}\n"
-            f'What just happened: "{evidence_text}"\n'
-            f"You ({user_type}) → them ({counterpart_type}): {pairing_note}\n"
+            f"Counterpart: {counterpart_label} — {state_desc}\n"
+            f"What's happening: {route_note}\n"
+            f'What they just said: "{evidence_text}"\n'
+            f"You ({user_type}) → {counterpart_label}: {pairing_note}\n"
             f"Goal: {goal}\n"
             f"{playbook_section}"
-            "Give a coaching tip that names the dynamic and tells me exactly what to do:"
+            f"Give a plain-English coaching tip that names {counterpart_name or 'the counterpart'} and tells me exactly what to do:"
         )
         return await self._call_haiku(
             "audience", user_msg, f"elm:{state}", event.speaker_id
@@ -335,6 +440,7 @@ class CoachingEngine:
         )
         context = user.context if user else "meeting"
         counterpart_type = participant.superpower if participant else "Unknown"
+        counterpart_name = self._resolve_speaker_name(participant.speaker_id) if participant else ""
 
         # Mention context shift when the user's style differs by meeting type
         shift_note = ""
@@ -361,7 +467,11 @@ class CoachingEngine:
             for u in recent_transcript[-8:]:
                 speaker = u.get("speaker", "?")
                 text = u.get("text", "")[:120]
-                label = "You" if speaker == self._user_speaker else speaker
+                if speaker == self._user_speaker:
+                    label = "You"
+                else:
+                    resolved = self._resolve_speaker_name(speaker)
+                    label = resolved if resolved else speaker
                 lines.append(f"  {label}: {text}")
             transcript_section = (
                 "Recent conversation:\n" + "\n".join(lines) + "\n\n"
@@ -409,11 +519,10 @@ class CoachingEngine:
             f"Meeting context: {context}\n"
             f"You are a {user_type}{shift_note}.\n"
             + (f"{flex_note}\n" if flex_note else "")
-            + f"Primary counterpart: {counterpart_type}\n\n"
-            "Read the conversation flow. What processing mode is the room in "
-            "(Central Route / Peripheral Route)? Is anyone ego-threatened or "
-            "checked out? Give ONE coaching tip that names the dynamic and "
-            "tells me exactly what to do right now:"
+            + f"Primary counterpart: {f'{counterpart_name} ({counterpart_type})' if counterpart_name else counterpart_type}\n\n"
+            "Read the conversation flow. Is anyone defensive, checked out, or "
+            "just going along to be polite? Give ONE coaching tip in plain English that "
+            "names the specific person and tells me exactly what to do right now:"
         )
         return await self._call_haiku("self", user_msg, "cadence:self", "")
 
@@ -454,8 +563,33 @@ class CoachingEngine:
         return None
 
     # ------------------------------------------------------------------
-    # Participant lookup
+    # Speaker name + archetype resolution
     # ------------------------------------------------------------------
+
+    def _resolve_speaker_name(self, speaker_id: str) -> str:
+        """
+        Resolve a speaker_id to a human name from the participants list.
+
+        Tries: (1) direct speaker_id match, (2) index-based lookup.
+        Returns "" if no name can be resolved.
+        """
+        if not self._participants:
+            return ""
+        # Direct match by speaker_id field
+        for p in self._participants:
+            if p.get("speaker_id") == speaker_id:
+                return p.get("name", "")
+        # Index-based matching
+        try:
+            if speaker_id.startswith("counterpart_"):
+                idx = int(speaker_id.replace("counterpart_", ""))
+            else:
+                idx = int(speaker_id.replace("speaker_", "")) - 1
+            if 0 <= idx < len(self._participants):
+                return self._participants[idx].get("name", "")
+        except (ValueError, IndexError):
+            pass
+        return ""
 
     def _lookup_participant(self, speaker_id: str) -> str:
         """Look up a participant's archetype from pre-seeded data by speaker ID or index."""

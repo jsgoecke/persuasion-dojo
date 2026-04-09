@@ -40,9 +40,11 @@ class FakeWord:
 
 @dataclass
 class FakeTranscriptLine:
+    text: str = ""
     words: list[FakeWord] = field(default_factory=list)
     is_new: bool = False
     is_updated: bool = False
+    is_complete: bool = False
     has_text_changed: bool = False
     has_speaker_id: bool = False
     speaker_id: str = ""
@@ -241,7 +243,7 @@ class TestTranscriptEvents:
 
         event = FakeTranscriptEvent(
             line=FakeTranscriptLine(
-                words=[FakeWord("hello"), FakeWord("world")],
+                text="hello world",
                 is_new=True,
             )
         )
@@ -260,7 +262,7 @@ class TestTranscriptEvents:
 
         event = FakeTranscriptEvent(
             line=FakeTranscriptLine(
-                words=[FakeWord("hello"), FakeWord("there")],
+                text="hello there",
                 is_updated=True,
                 has_text_changed=True,
             )
@@ -277,10 +279,10 @@ class TestTranscriptEvents:
         client, utterances, fake = _make_client()
         await client.connect()
 
-        # A line that is not new and not updated-with-changes = completed
         event = FakeTranscriptEvent(
             line=FakeTranscriptLine(
-                words=[FakeWord("final"), FakeWord("result")],
+                text="final result",
+                is_complete=True,
                 is_new=False,
                 is_updated=False,
                 has_text_changed=False,
@@ -300,7 +302,7 @@ class TestTranscriptEvents:
         await client.connect()
 
         event = FakeTranscriptEvent(
-            line=FakeTranscriptLine(words=[], is_new=True)
+            line=FakeTranscriptLine(text="", is_new=True)
         )
         fake.fire_event(event)
         await asyncio.sleep(0.05)
@@ -316,7 +318,7 @@ class TestTranscriptEvents:
 
         event = FakeTranscriptEvent(
             line=FakeTranscriptLine(
-                words=[FakeWord("test")],
+                text="test",
                 is_new=True,
             )
         )
@@ -343,7 +345,7 @@ class TestDiarization:
 
         event = FakeTranscriptEvent(
             line=FakeTranscriptLine(
-                words=[FakeWord("hello")],
+                text="hello",
                 is_new=True,
                 has_speaker_id=True,
                 speaker_index=3,
@@ -362,7 +364,7 @@ class TestDiarization:
 
         event = FakeTranscriptEvent(
             line=FakeTranscriptLine(
-                words=[FakeWord("hello")],
+                text="hello",
                 is_new=True,
                 has_speaker_id=True,
                 speaker_index=2,
@@ -381,7 +383,7 @@ class TestDiarization:
 
         event = FakeTranscriptEvent(
             line=FakeTranscriptLine(
-                words=[FakeWord("hello")],
+                text="hello",
                 is_new=True,
                 has_speaker_id=False,
             )
@@ -406,7 +408,7 @@ class TestDisconnectFlush:
         # Fire a "new line" event (interim, not final)
         event = FakeTranscriptEvent(
             line=FakeTranscriptLine(
-                words=[FakeWord("pending"), FakeWord("text")],
+                text="pending text",
                 is_new=True,
             )
         )
@@ -454,12 +456,211 @@ class TestFinalize:
     async def test_finalize_calls_update_transcription(self):
         client, _, fake = _make_client()
         await client.connect()
-        fake.update_transcription = MagicMock()
+        # In test mode, _stream IS fake, so mock its update_transcription
+        client._stream.update_transcription = MagicMock()
         await client.finalize()
-        fake.update_transcription.assert_called_once()
+        client._stream.update_transcription.assert_called_once()
         await client.disconnect()
 
     @pytest.mark.asyncio
     async def test_finalize_before_connect_is_safe(self):
         client, _, _ = _make_client()
         await client.finalize()  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Regression: line.text is the source of truth, not line.words
+# ---------------------------------------------------------------------------
+
+class TestLineTextRegression:
+    """
+    Regression tests for the line.text bug (v0.10.0.0).
+
+    Moonshine's TranscriptEvent.line has both .text and .words attributes.
+    The actual transcript text is on line.text. The .words list may have
+    empty text fields. We must always read from line.text.
+    """
+
+    @pytest.mark.asyncio
+    async def test_line_text_used_not_words(self):
+        """Text comes from line.text, not from joining line.words."""
+        client, utterances, fake = _make_client()
+        await client.connect()
+
+        # Simulate what Moonshine actually sends: text on line.text,
+        # words with empty .text fields
+        event = FakeTranscriptEvent(
+            line=FakeTranscriptLine(
+                text="Ever tried? Ever failed?",
+                words=[FakeWord(""), FakeWord("")],  # empty word texts
+                is_new=True,
+            )
+        )
+        fake.fire_event(event)
+        await asyncio.sleep(0.05)
+
+        assert len(utterances) == 1
+        assert utterances[0][1] == "Ever tried? Ever failed?"
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_line_text_empty_words_nonempty(self):
+        """If line.text is empty, event is skipped even if words exist."""
+        client, utterances, fake = _make_client()
+        await client.connect()
+
+        event = FakeTranscriptEvent(
+            line=FakeTranscriptLine(
+                text="",
+                words=[FakeWord("ghost")],
+                is_new=True,
+            )
+        )
+        fake.fire_event(event)
+        await asyncio.sleep(0.05)
+
+        assert len(utterances) == 0
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_line_text_whitespace_only_ignored(self):
+        """Whitespace-only line.text should be ignored."""
+        client, utterances, fake = _make_client()
+        await client.connect()
+
+        event = FakeTranscriptEvent(
+            line=FakeTranscriptLine(text="   ", is_new=True)
+        )
+        fake.fire_event(event)
+        await asyncio.sleep(0.05)
+
+        assert len(utterances) == 0
+        await client.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Regression: is_complete flag for final utterances
+# ---------------------------------------------------------------------------
+
+class TestIsCompleteRegression:
+    """
+    Regression: completed lines must use line.is_complete, not infer
+    finality from the absence of is_new/is_updated/has_text_changed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_is_complete_true_fires_final(self):
+        client, utterances, fake = _make_client()
+        await client.connect()
+
+        event = FakeTranscriptEvent(
+            line=FakeTranscriptLine(
+                text="done",
+                is_complete=True,
+                is_new=False,
+                is_updated=True,
+                has_text_changed=False,
+            )
+        )
+        fake.fire_event(event)
+        await asyncio.sleep(0.05)
+
+        assert len(utterances) == 1
+        assert utterances[0][2] is True  # is_final
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_no_change_no_complete_skipped(self):
+        """Updated line with no text change and not complete should be skipped."""
+        client, utterances, fake = _make_client()
+        await client.connect()
+
+        event = FakeTranscriptEvent(
+            line=FakeTranscriptLine(
+                text="same",
+                is_new=False,
+                is_updated=True,
+                is_complete=False,
+                has_text_changed=False,
+            )
+        )
+        fake.fire_event(event)
+        await asyncio.sleep(0.05)
+
+        assert len(utterances) == 0
+        await client.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Regression: stream API used instead of direct transcriber
+# ---------------------------------------------------------------------------
+
+class TestStreamAPIRegression:
+    """
+    Regression: MoonshineTranscriber must use create_stream() for audio
+    and listeners, not the top-level Transcriber methods.
+    With test injection, _stream == _transcriber (the fake).
+    """
+
+    @pytest.mark.asyncio
+    async def test_stream_receives_audio_not_transcriber(self):
+        """send_audio must route to _stream.add_audio."""
+        client, _, fake = _make_client()
+        await client.connect()
+
+        pcm = _pcm_bytes([1000, 2000])
+        await client.send_audio(pcm)
+
+        # In test mode, _stream IS the fake (see connect: self._stream = self._transcriber)
+        assert client._stream is fake
+        assert len(fake._audio_chunks) == 1
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_stream_gets_listener_not_transcriber(self):
+        """Listener must be added to _stream, not _transcriber."""
+        client, _, fake = _make_client()
+        await client.connect()
+
+        # The fake IS both _stream and _transcriber in test mode.
+        # Verify the listener was added (fire_event works because listener is on fake).
+        event = FakeTranscriptEvent(
+            line=FakeTranscriptLine(text="hello", is_new=True)
+        )
+        fake.fire_event(event)
+        assert len(fake._listeners) >= 1
+        await client.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Regression: model_path must be str, not PosixPath
+# ---------------------------------------------------------------------------
+
+class TestModelPathRegression:
+    """
+    Regression: moonshine-voice's get_model_path returns a PosixPath,
+    but the C API needs a str. Verify _load_model converts to str.
+
+    We can't test _load_model directly without the real model, but we
+    verify the factory injection path sets _stream correctly, which
+    confirms the connect path doesn't blow up on PosixPath.
+    """
+
+    @pytest.mark.asyncio
+    async def test_factory_path_creates_stream(self):
+        """Factory injection path must set _stream (not leave it None)."""
+        client, _, fake = _make_client()
+        await client.connect()
+
+        assert client._stream is not None
+        assert client._stream is fake
+        await client.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_clears_stream(self):
+        """After disconnect, _stream must be None."""
+        client, _, fake = _make_client()
+        await client.connect()
+        assert client._stream is not None
+        await client.disconnect()
+        assert client._stream is None

@@ -57,13 +57,13 @@ Three layers fire simultaneously on every trigger:
 
 ### Example prompts
 
-> *"She's in Central Route — anchor your next point in a number."*
+> *"Sarah needs proof — lead with a specific number."*
 
-> *"You've been in advocate mode for 4 minutes — ask a question to re-engage the group."*
+> *"You've been talking for 4 minutes — ask a question to re-engage the group."*
 
-> *"He's ego-threatened — back off and ask what concerns him most."*
+> *"Mike is getting defensive — acknowledge his point first, then redirect."*
 
-> *"You are providing too much information — invite contribution so the idea becomes shared."*
+> *"The group is going along to get along — ask what concerns haven't been raised."*
 
 ---
 
@@ -105,7 +105,11 @@ At session end, the system computes a **Persuasion Score (0–100)** and a **Gro
 - **Retro import** — upload an audio file or text transcript (supports Zoom, Teams, Meet, VTT, SRT, Markdown, plain text) for retroactive coaching analysis
 - **Live speaker identification** — real-time name resolution for meeting participants via LLM inference + calendar roster
 - **Team sync** — AES-256 encrypted JSON export/import to share participant intelligence with teammates
-- **Session debrief** — full transcript, prompt history, Persuasion Score, Growth Score
+- **Per-person coaching** — coaching prompts name the specific counterpart and tailor advice to their Superpower pairing with yours
+- **Echo filter** — prevents your own voice (picked up by system audio capture) from creating false counterpart utterances
+- **Calendar auto-seed** — when a Google Calendar meeting is happening now or within 15 minutes, attendees are automatically populated with archetype lookup
+- **User archetype auto-detection** — your Superpower type is inferred from your speech patterns and persists across sessions
+- **Session debrief** — per-participant relationship summaries, pairing dynamics, and retro coaching bullets
 - **Flexibility Score** — tracks how well you adapt your communication style across different meeting types (board, 1:1, team, client)
 - **Per-participant convergence** — breaks down conversation alignment per counterpart, so you see which relationships are building agreement
 - **Skill mastery tracking** — Bayesian Knowledge Tracing across 5 coaching skills, replacing frequency-based badges with real learning curves
@@ -117,7 +121,7 @@ At session end, the system computes a **Persuasion Score (0–100)** and a **Gro
 | Layer | Technology |
 |---|---|
 | Audio capture | Swift + ScreenCaptureKit (macOS 12.3+) |
-| Transcription | Deepgram streaming API (speaker diarization) |
+| Transcription | Deepgram streaming API (primary) + Moonshine local fallback (auto failover) |
 | Backend | Python 3.12 + FastAPI + WebSockets |
 | Coaching engine (real-time) | Claude Haiku (`claude-haiku-4-5`) — <1.5s timeout with cached fallback |
 | Coaching engine (debrief) | Claude Opus (`claude-opus-4-6`) — background, post-session |

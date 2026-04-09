@@ -26,6 +26,14 @@ export interface CoachingPrompt {
  * Payload of the ``session_ended`` WebSocket message.
  * The backend computes these scores at session end.
  */
+/** Per-participant profile included in session_ended data. */
+export interface SessionParticipantProfile {
+  speaker_id: string;
+  name: string;
+  archetype: string;
+  confidence: number;
+}
+
 export interface SessionEndData {
   session_id: string;
   /** 0–100 composite Persuasion Score */
@@ -40,6 +48,10 @@ export interface SessionEndData {
     /** 0–100 Convergence sub-score (40% weight) */
     convergence: number;
   };
+  /** Per-participant profiles detected during the session. */
+  participants?: SessionParticipantProfile[];
+  /** User's auto-detected archetype for the session. */
+  user_archetype?: string | null;
 }
 
 /** WebSocket connection lifecycle state. */

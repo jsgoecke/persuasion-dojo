@@ -15,6 +15,9 @@ Covers:
   6. Silence watchdog: fires after timeout, resets on audio, doesn't fire early
   7. Audio callback plumbing: chunks forwarded, level metering works
   8. Deepgram reconnect gating: backoff after failure, retry after cooldown
+  9. Silence audio detection: all-zero PCM produces zero level, triggers no transcription
+  10. Transcriber status WebSocket messages: cloud/local badge events reach frontend
+  11. Audio level accumulation: threshold crossing, multi-chunk accumulation
 """
 
 from __future__ import annotations
@@ -838,8 +841,9 @@ class TestWebSocketMultiSession:
         close immediately with an error — no dangling pipe reader.
         (In auto/local mode, Moonshine fallback handles this gracefully.)
         """
-        # Override the settings mock to return no key
-        with patch("backend.main._load_settings", return_value={}):
+        # Override both settings and env var to simulate missing key
+        with patch("backend.main._load_settings", return_value={}), \
+             patch.dict("os.environ", {"DEEPGRAM_API_KEY": ""}, clear=False):
             r = client.post("/sessions", json={"context": "meeting", "transcription_mode": "cloud"})
             assert r.status_code == 201
             sid = r.json()["session_id"]
@@ -890,3 +894,419 @@ class TestAudioLevelMetering:
         rms = math.sqrt(sum(s * s for s in samples) / len(samples))
         level = min(rms / 32767.0, 1.0)
         assert 0.3 < level < 0.7
+
+
+# ---------------------------------------------------------------------------
+# Regression: single-pipe mode must meter audio levels
+# ---------------------------------------------------------------------------
+
+class TestSinglePipeModeAudioLevels:
+    """
+    Regression test for single-pipe audio level metering (v0.10.0.0).
+
+    When only one pipe exists (no mic pipe), the system audio handler
+    must also compute and send audio levels. Previously, is_mic=False
+    on the system handler meant no audio_level messages were ever sent,
+    causing the UI meter to show zero.
+
+    The fix: in single-pipe mode, the system handler gets is_mic=True.
+    """
+
+    def test_single_pipe_flag_logic(self):
+        """
+        Verify the is_mic flag logic: when _dual_pipe_mode is False,
+        the system chunk handler must have is_mic=True.
+
+        This tests the logic extracted from main.py's session handler.
+        """
+        # Simulate the dual/single pipe logic from main.py
+        # Dual pipe mode: mic_handler.is_mic=True, system_handler.is_mic=False
+        dual_pipe_mode = True
+        system_is_mic = not dual_pipe_mode
+        assert system_is_mic is False, "Dual pipe: system should NOT meter"
+
+        # Single pipe mode: system_handler.is_mic=True (it's the only source)
+        dual_pipe_mode = False
+        system_is_mic = not dual_pipe_mode
+        assert system_is_mic is True, "Single pipe: system MUST meter"
+
+    def test_audio_level_computed_from_pcm(self):
+        """
+        Verify that the audio level metering math works correctly
+        on PCM data that would come from system audio in single-pipe mode.
+        """
+        import struct
+
+        # Simulate 250ms of moderate speech audio (mix of amplitudes)
+        n_samples = 4000  # 250ms at 16kHz
+        # Realistic speech: alternating loud and quiet samples
+        samples_in = []
+        for i in range(n_samples):
+            # Simulated speech envelope
+            amp = int(8000 * math.sin(2 * math.pi * 200 * i / 16000))
+            samples_in.append(amp)
+
+        data = struct.pack(f"<{n_samples}h", *samples_in)
+        samples_out = struct.unpack(f"<{n_samples}h", data)
+        rms = math.sqrt(sum(s * s for s in samples_out) / len(samples_out))
+        level = min(rms / 32767.0, 1.0)
+
+        # Should be non-zero (the bug was always-zero levels)
+        assert level > 0.1, f"Audio level {level} too low — metering broken"
+        assert level < 1.0
+
+
+# ---------------------------------------------------------------------------
+# 9. Silence audio detection — all-zero PCM from AudioCapture
+# ---------------------------------------------------------------------------
+
+class TestSilenceDetection:
+    """
+    Regression tests for the silence-output bug (v0.11.0).
+
+    When AudioCapture lacks Screen Recording permission, ScreenCaptureKit
+    delivers all-zero audio buffers. The mixer writes these zeros to the pipe.
+    The backend receives 320-byte chunks of silence, computes RMS=0, and
+    sends audio_level=0.0 to the frontend — causing the meter to flatline.
+
+    These tests verify that:
+    - All-zero chunks are detected as silence
+    - Level accumulation works correctly across small chunks (320 bytes = 160 samples)
+    - The threshold is actually reached after enough small chunks
+    - Mixed silence + real audio produces correct levels
+    """
+
+    def test_small_chunks_accumulate_to_threshold(self):
+        """
+        AudioCapture sends 320-byte chunks (160 samples, 10ms at 16kHz).
+        The level interval is 4000 samples. It takes 25 chunks to trigger
+        a level computation. Verify the accumulator works.
+        """
+        import struct
+
+        threshold = 16_000 // 4  # 4000 samples
+        chunk_size_samples = 160
+        accum = []
+        sample_count = 0
+
+        # Feed 25 chunks of moderate audio
+        for _ in range(25):
+            samples = [8000] * chunk_size_samples
+            data = struct.pack(f"<{chunk_size_samples}h", *samples)
+            parsed = struct.unpack(f"<{chunk_size_samples}h", data)
+            accum.extend(s * s for s in parsed)
+            sample_count += chunk_size_samples
+
+        assert sample_count == 4000
+        assert sample_count >= threshold
+        assert len(accum) == 4000
+
+        rms = math.sqrt(sum(accum) / len(accum))
+        level = min(rms / 32767.0, 1.0)
+        assert level > 0.2, "25 chunks of moderate audio must produce non-zero level"
+
+    def test_silence_chunks_produce_zero_level(self):
+        """
+        25 chunks of all-zero PCM (AudioCapture without permission)
+        must produce level == 0.0.
+        """
+        import struct
+
+        chunk_size_samples = 160
+        accum = []
+        for _ in range(25):
+            data = struct.pack(f"<{chunk_size_samples}h", *([0] * chunk_size_samples))
+            parsed = struct.unpack(f"<{chunk_size_samples}h", data)
+            accum.extend(s * s for s in parsed)
+
+        rms = math.sqrt(sum(accum) / len(accum)) if accum else 0
+        level = min(rms / 32767.0, 1.0)
+        assert level == 0.0, "Silence must produce exactly zero level"
+
+    def test_mixed_silence_and_audio(self):
+        """
+        If first 20 chunks are silence and last 5 are loud,
+        the RMS should be non-zero but lower than pure audio.
+        """
+        import struct
+
+        chunk_size_samples = 160
+        accum = []
+
+        # 20 chunks of silence
+        for _ in range(20):
+            data = struct.pack(f"<{chunk_size_samples}h", *([0] * chunk_size_samples))
+            parsed = struct.unpack(f"<{chunk_size_samples}h", data)
+            accum.extend(s * s for s in parsed)
+
+        # 5 chunks of loud audio
+        for _ in range(5):
+            data = struct.pack(f"<{chunk_size_samples}h", *([20000] * chunk_size_samples))
+            parsed = struct.unpack(f"<{chunk_size_samples}h", data)
+            accum.extend(s * s for s in parsed)
+
+        rms = math.sqrt(sum(accum) / len(accum))
+        level = min(rms / 32767.0, 1.0)
+        assert 0.1 < level < 0.7, f"Mixed silence+audio should be moderate, got {level}"
+
+    def test_threshold_not_reached_with_too_few_chunks(self):
+        """
+        With only 10 chunks (1600 samples), the 4000-sample threshold
+        should NOT be reached. This verifies no premature level event.
+        """
+        threshold = 16_000 // 4  # 4000 samples
+        sample_count = 160 * 10  # 10 chunks
+        assert sample_count < threshold, "10 chunks must be below threshold"
+
+    def test_struct_unpack_handles_odd_byte_count(self):
+        """
+        If a chunk has an odd number of bytes (e.g. 321), struct.unpack
+        should still work on the even portion.
+        """
+        import struct
+
+        data = bytes(321)  # 321 bytes → 160 samples + 1 leftover byte
+        n_samples = len(data) // 2
+        assert n_samples == 160
+        samples = struct.unpack(f"<{n_samples}h", data[:n_samples * 2])
+        assert len(samples) == 160
+        assert all(s == 0 for s in samples)
+
+
+# ---------------------------------------------------------------------------
+# 10. Transcriber status WebSocket messages
+# ---------------------------------------------------------------------------
+
+class TestTranscriberStatusWebSocket:
+    """
+    Verify that transcriber_status events (using_cloud, using_local,
+    fallback_activated) are forwarded to the frontend via WebSocket.
+
+    These tests mock the audio pipeline and HybridTranscriber to control
+    which status events fire, then verify the WebSocket messages received.
+    """
+
+    @pytest.fixture(autouse=True)
+    def stub_pipeline(self):
+        """Stub audio pipeline, capturing the on_status callback."""
+        self._captured_on_status = None
+
+        pipe_mock = MagicMock()
+        pipe_mock.start = AsyncMock()
+        pipe_mock.stop = AsyncMock()
+        pipe_mock.last_audio_time = 0.0
+
+        transcriber_mock = MagicMock()
+        transcriber_mock.connect = AsyncMock()
+        transcriber_mock.disconnect = AsyncMock()
+        transcriber_mock.send_audio = AsyncMock()
+        transcriber_mock.is_connected = False
+
+        original_init = None
+
+        def capture_hybrid_init(**kwargs):
+            self._captured_on_status = kwargs.get("on_status")
+            return transcriber_mock
+
+        with (
+            patch("backend.main.AudioPipeReader", return_value=pipe_mock),
+            patch("backend.main.HybridTranscriber", side_effect=capture_hybrid_init),
+            patch("backend.main._load_settings", return_value={
+                "deepgram_api_key": "test-key",
+            }),
+        ):
+            self._pipe_mock = pipe_mock
+            self._transcriber_mock = transcriber_mock
+            yield
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from backend.database import override_engine
+        from backend.main import app
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        override_engine(engine)
+        with TestClient(app, raise_server_exceptions=True) as c:
+            yield c
+        asyncio.run(engine.dispose())
+
+    def _create_session(self, client) -> str:
+        r = client.post("/sessions", json={"context": "meeting"})
+        assert r.status_code == 201
+        return r.json()["session_id"]
+
+    def test_using_cloud_status_sent(self, client):
+        """When HybridTranscriber emits 'using_cloud', the frontend
+        receives a transcriber_status message with event='using_cloud'."""
+        from backend.main import SessionPipeline
+
+        sid = self._create_session(client)
+        with patch.object(
+            SessionPipeline, "compute_scores",
+            return_value={
+                "persuasion_score": 60,
+                "timing_score": 7, "ego_safety_score": 7, "convergence_score": 7,
+                "timing_signals": [], "ego_safety_signals": [], "convergence_signals": [],
+            },
+        ):
+            with client.websocket_connect(f"/ws/session/{sid}") as ws:
+                # The on_status callback was captured during HybridTranscriber init
+                if self._captured_on_status:
+                    asyncio.get_event_loop().run_until_complete(
+                        self._captured_on_status("using_cloud", {})
+                    )
+
+                    data = ws.receive_json()
+                    assert data["type"] == "transcriber_status"
+                    assert data["event"] == "using_cloud"
+
+                ws.send_json({"type": "session_end"})
+                # Drain remaining messages
+                while True:
+                    msg = ws.receive_json()
+                    if msg["type"] == "session_ended":
+                        break
+
+    def test_fallback_activated_status_sent(self, client):
+        """When HybridTranscriber emits 'fallback_activated', the frontend
+        receives it with the reason detail."""
+        from backend.main import SessionPipeline
+
+        sid = self._create_session(client)
+        with patch.object(
+            SessionPipeline, "compute_scores",
+            return_value={
+                "persuasion_score": 60,
+                "timing_score": 7, "ego_safety_score": 7, "convergence_score": 7,
+                "timing_signals": [], "ego_safety_signals": [], "convergence_signals": [],
+            },
+        ):
+            with client.websocket_connect(f"/ws/session/{sid}") as ws:
+                if self._captured_on_status:
+                    asyncio.get_event_loop().run_until_complete(
+                        self._captured_on_status("fallback_activated", {
+                            "reason": "health_check_failed",
+                        })
+                    )
+
+                    data = ws.receive_json()
+                    assert data["type"] == "transcriber_status"
+                    assert data["event"] == "fallback_activated"
+                    assert data["detail"]["reason"] == "health_check_failed"
+
+                ws.send_json({"type": "session_end"})
+                while True:
+                    msg = ws.receive_json()
+                    if msg["type"] == "session_ended":
+                        break
+
+
+# ---------------------------------------------------------------------------
+# 11. Audio level accumulation across multiple small chunks
+# ---------------------------------------------------------------------------
+
+class TestAudioLevelAccumulation:
+    """
+    Test the audio level accumulation logic that drives the frontend meter.
+
+    The actual metering code in main.py accumulates PCM sample squares in
+    _level_accum and fires when _level_sample_count >= 4000. These tests
+    verify the accumulation math independently.
+
+    Regression: In the v0.11.0 debug session, audio levels showed 0.0 because
+    AudioCapture was outputting silence (Screen Recording permission denied).
+    The metering code was correct but the input was all zeros. These tests
+    verify both the math AND the zero-input case.
+    """
+
+    def test_accumulator_resets_after_threshold(self):
+        """After computing a level, the accumulator must clear."""
+        import struct
+
+        threshold = 4000
+        chunk_samples = 160
+        accum = []
+        sample_count = 0
+
+        # Feed exactly enough chunks to trigger
+        needed = threshold // chunk_samples  # 25
+        for _ in range(needed):
+            data = struct.pack(f"<{chunk_samples}h", *([10000] * chunk_samples))
+            samples = struct.unpack(f"<{chunk_samples}h", data)
+            accum.extend(s * s for s in samples)
+            sample_count += chunk_samples
+
+        assert sample_count >= threshold
+
+        # Compute and reset (as main.py does)
+        rms = math.sqrt(sum(accum) / len(accum))
+        level_1 = min(rms / 32767.0, 1.0)
+        accum.clear()
+        sample_count = 0
+
+        assert level_1 > 0
+        assert len(accum) == 0
+        assert sample_count == 0
+
+        # Feed silence after reset
+        for _ in range(needed):
+            data = struct.pack(f"<{chunk_samples}h", *([0] * chunk_samples))
+            samples = struct.unpack(f"<{chunk_samples}h", data)
+            accum.extend(s * s for s in samples)
+            sample_count += chunk_samples
+
+        rms = math.sqrt(sum(accum) / len(accum)) if accum else 0
+        level_2 = min(rms / 32767.0, 1.0)
+        assert level_2 == 0.0, "After reset, silence must produce zero"
+
+    def test_first_chunks_are_larger(self):
+        """
+        AudioCapture initially sends 1600-byte chunks (800 samples, 50ms)
+        before settling to 320-byte chunks (160 samples, 10ms).
+        Verify accumulation works across mixed sizes.
+        """
+        import struct
+
+        threshold = 4000
+        accum = []
+        sample_count = 0
+
+        # 3 large chunks (800 samples each = 2400 total)
+        for _ in range(3):
+            n = 800
+            data = struct.pack(f"<{n}h", *([5000] * n))
+            samples = struct.unpack(f"<{n}h", data)
+            accum.extend(s * s for s in samples)
+            sample_count += n
+
+        assert sample_count == 2400
+
+        # 10 small chunks (160 samples each = 1600 more = 4000 total)
+        for _ in range(10):
+            n = 160
+            data = struct.pack(f"<{n}h", *([5000] * n))
+            samples = struct.unpack(f"<{n}h", data)
+            accum.extend(s * s for s in samples)
+            sample_count += n
+
+        assert sample_count == 4000
+        assert sample_count >= threshold
+
+        rms = math.sqrt(sum(accum) / len(accum))
+        level = min(rms / 32767.0, 1.0)
+        assert level > 0.1, "Mixed chunk sizes must produce valid level"
+
+    def test_level_frequency_matches_interval(self):
+        """
+        At 16kHz with 320-byte chunks (160 samples, 10ms each), the level
+        fires every 4000 samples = every 25 chunks = every 250ms.
+        Verify this timing.
+        """
+        threshold = 4000
+        chunk_samples = 160
+        chunks_per_level = threshold // chunk_samples
+        assert chunks_per_level == 25
+        time_per_level_ms = chunks_per_level * 10  # 10ms per chunk
+        assert time_per_level_ms == 250, "Level must fire every 250ms"

@@ -6,6 +6,14 @@ import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import * as Sentry from "@sentry/electron/main";
 import { autoUpdater } from "electron-updater";
 
+// ── Log unhandled errors to stderr (debug) ───────────────────────────────────
+process.on("uncaughtException", (err) => {
+  process.stderr.write(`[MAIN-UNCAUGHT] ${err.stack || err.message}\n`);
+});
+process.on("unhandledRejection", (reason) => {
+  process.stderr.write(`[MAIN-UNHANDLED-REJECTION] ${reason}\n`);
+});
+
 // ── Persistent window position ────────────────────────────────────────────────
 const PREFS_PATH = join(app.getPath("userData"), "window-prefs.json");
 

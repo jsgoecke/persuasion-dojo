@@ -135,18 +135,25 @@ def make_classification(superpower: str = "Architect") -> WindowClassification:
 class TestUserSpeakingSuppression:
     @pytest.mark.asyncio
     async def test_elm_event_suppressed_when_user_speaking(self):
+        """ELM (audience-layer) prompts are suppressed when user is speaking,
+        but a self-layer general prompt fires instead."""
         engine = make_engine()
         result = await engine.process(
             elm_event=make_elm_event(),
             user_is_speaking=True,
         )
-        assert result is None
+        # ELM prompt suppressed, but self-layer general fires
+        assert result is not None
+        assert result.triggered_by == "cadence:self"
 
     @pytest.mark.asyncio
-    async def test_general_cadence_suppressed_when_user_speaking(self):
+    async def test_general_cadence_fires_when_user_speaking(self):
+        """Self-layer prompts fire on user utterances — this is how
+        'you've been advocating too long' coaching works."""
         engine = make_engine()
         result = await engine.process(user_is_speaking=True)
-        assert result is None
+        assert result is not None
+        assert result.layer == "self"
 
     @pytest.mark.asyncio
     async def test_prompt_fires_when_user_not_speaking(self):

@@ -172,6 +172,7 @@ export function Overlay(): React.ReactElement {
   const {
     sessionId: liveSessionId, connectionState, sessionPhase, currentPrompt, prompts, sessionResult,
     errorMessage, audioLevel, transcripts, speakerNames, detectedProfiles,
+    transcriptionBackend,
     startSession, endSession, dismissPrompt, clearError, resetSession, confirmProfile,
   } = useCoachingSocket();
 
@@ -221,6 +222,12 @@ export function Overlay(): React.ReactElement {
 
   // Profile count for home screen badge
   const [profileCount, setProfileCount] = useState<number | null>(null);
+
+  // Go-live participant selection state
+  type SetupParticipant = { id: string; name: string; archetype: string };
+  const [setupParticipants, setSetupParticipants] = useState<SetupParticipant[]>([]);
+  /** Tracks where the profiles screen should return to (setup vs home). */
+  const [profilePickerReturn, setProfilePickerReturn] = useState<Screen>("home");
 
   // Audio status (from Electron main process via Swift binary OR backend no_audio)
   const [audioStatus, setAudioStatus] = useState<{ type: string; message: string } | null>(null);
@@ -412,22 +419,17 @@ export function Overlay(): React.ReactElement {
   };
 
   const handleBeginCoaching = useCallback(async () => {
-    const participants = [
-      { initials: "SC", name: "Sarah Chen", type: "INQ" },
-      { initials: "MR", name: "Mike R", type: "ARC" },
-      { initials: "KB", name: "Kevin B", type: "BRI" },
-    ];
     await startSession({
       userArchetype: archetypeLabel(userArchetype),
       meetingTitle: meetingName || undefined,
-      participants: participants.map(p => ({
+      participants: setupParticipants.map(p => ({
         name: p.name,
-        archetype: typeAbbrevToFull[p.type] || p.type,
+        archetype: p.archetype,
       })),
     });
-  }, [startSession, userArchetype, meetingName]);
+  }, [startSession, userArchetype, meetingName, setupParticipants]);
   const handleBackToHome = useCallback(() => {
-    resetSession(); setScreen("home"); setMeetingName(""); setHistoryOpen(false);
+    resetSession(); setScreen("home"); setMeetingName(""); setHistoryOpen(false); setSetupParticipants([]);
   }, [resetSession]);
 
   // ── Top bar (shared by all sub-screens) ────────────────────────────────────
@@ -898,7 +900,7 @@ export function Overlay(): React.ReactElement {
               No profiles yet. Add participants via the Profiles screen or analyse a transcript first.
             </div>
             <button
-              onClick={() => setScreen("profiles")}
+              onClick={() => { setProfilePickerReturn("home"); setScreen("profiles"); }}
               style={{
                 background: "none", border: "1px solid var(--border-medium)", borderRadius: 8,
                 padding: "8px 16px", fontFamily: BODY, fontSize: 13, color: "var(--gold)",
@@ -1198,12 +1200,6 @@ export function Overlay(): React.ReactElement {
   // SCREEN: PRE-SESSION SETUP (Go Live flow)
   // ═════════════════════════════════════════════════════════════════════════
   if (screen === "setup") {
-    const setupParticipants = [
-      { initials: "SC", name: "Sarah Chen", type: "INQ" },
-      { initials: "MR", name: "Mike R", type: "ARC" },
-      { initials: "KB", name: "Kevin B", type: "BRI" },
-    ];
-
     return shell(
       <div style={{ animation: "fadeIn 200ms ease-out", display: "flex", flexDirection: "column", flex: 1 }}>
         {topBar("Session setup", () => { clearError(); setScreen("home"); })}
@@ -1231,7 +1227,7 @@ export function Overlay(): React.ReactElement {
 
         <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 6 }}>Participants (optional)</div>
         <button
-          onClick={() => setScreen("profiles")}
+          onClick={() => { setProfilePickerReturn("setup"); setScreen("profiles"); }}
           style={{
             display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "12px 16px",
             background: "transparent", border: "1px dashed var(--border-medium)", borderRadius: 10,
@@ -1245,17 +1241,31 @@ export function Overlay(): React.ReactElement {
         </button>
 
         {/* Participant chips */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
-          {setupParticipants.map(p => (
-            <span key={p.initials} style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              padding: "6px 14px", background: "var(--blue-bg)", borderRadius: 20,
-              fontSize: 12, color: "var(--blue)",
-            }}>
-              {p.name} <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.4, opacity: 0.65 }}>{p.type}</span>
-            </span>
-          ))}
-        </div>
+        {setupParticipants.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
+            {setupParticipants.map(p => {
+              const abbrev = { Architect: "ARC", Firestarter: "FIR", Inquisitor: "INQ", "Bridge Builder": "BRI" }[p.archetype] || p.archetype?.slice(0, 3).toUpperCase() || "";
+              return (
+                <span key={p.id} style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: "6px 10px 6px 14px", background: "var(--blue-bg)", borderRadius: 20,
+                  fontSize: 12, color: "var(--blue)",
+                }}>
+                  {p.name} <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.4, opacity: 0.65 }}>{abbrev}</span>
+                  <button
+                    onClick={() => setSetupParticipants(prev => prev.filter(x => x.id !== p.id))}
+                    style={{
+                      background: "none", border: "none", cursor: "pointer", padding: "0 2px",
+                      fontSize: 14, lineHeight: 1, color: "var(--blue)", opacity: 0.5,
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.opacity = "1"; }}
+                    onMouseLeave={e => { e.currentTarget.style.opacity = "0.5"; }}
+                  >×</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         <div style={{ flex: 1 }} />
 
@@ -1309,6 +1319,27 @@ export function Overlay(): React.ReactElement {
                 );
               })}
             </div>
+            {/* Transcription backend indicator */}
+            {transcriptionBackend && (
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                marginLeft: 8, padding: "2px 8px",
+                borderRadius: 10, fontSize: 10, fontWeight: 500,
+                fontFamily: MONO, letterSpacing: 0.3, textTransform: "uppercase",
+                background: transcriptionBackend === "cloud"
+                  ? "rgba(90, 158, 111, 0.12)"
+                  : "rgba(212, 168, 83, 0.12)",
+                color: transcriptionBackend === "cloud"
+                  ? "var(--green)"
+                  : "var(--gold)",
+              }}>
+                <span style={{
+                  width: 5, height: 5, borderRadius: "50%",
+                  background: transcriptionBackend === "cloud" ? "var(--green)" : "var(--gold)",
+                }} />
+                {transcriptionBackend === "cloud" ? "Cloud" : "Local"}
+              </span>
+            )}
             {meetingName && <span style={{ fontSize: 13, color: "var(--text-secondary)", marginLeft: 6 }}>{meetingName}</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -1338,6 +1369,25 @@ export function Overlay(): React.ReactElement {
             borderRadius: 12, padding: "22px 24px", marginBottom: 20,
             animation: "promptIn 400ms ease-out forwards",
           }}>
+            {/* Per-person badge: show who this coaching is about */}
+            {currentPrompt.speaker_id && (() => {
+              const name = speakerNames[currentPrompt.speaker_id] || currentPrompt.speaker_id;
+              const profile = detectedProfiles.find(p => p.speaker_id === currentPrompt.speaker_id);
+              const archetype = profile?.archetype || "";
+              const abbrev = archetype ? (ARCHETYPE_ABBREV[archetype] || archetype.slice(0, 3).toUpperCase()) : "";
+              return (
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  marginBottom: 10, padding: "3px 10px",
+                  background: "rgba(212, 168, 83, 0.12)", borderRadius: 6,
+                  fontSize: 11, fontWeight: 600, fontFamily: MONO,
+                  color: "var(--gold)", letterSpacing: 0.5,
+                }}>
+                  <span>{name}</span>
+                  {abbrev && <span style={{ opacity: 0.7 }}>· {abbrev}</span>}
+                </div>
+              );
+            })()}
             <div style={{ fontSize: 17, fontWeight: 500, color: "var(--gold)", lineHeight: 1.5, marginBottom: 14 }}>
               {currentPrompt.text}
             </div>
@@ -1503,44 +1553,60 @@ export function Overlay(): React.ReactElement {
           </>
         )}
 
-        {/* Participants detected */}
+        {/* Participants detected — per-person cards with archetype badges */}
         {detectedProfiles.length > 0 && (
           <>
             <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 12 }}>
-              Participants detected
+              Participants · {sessionResult?.user_archetype ? `You: ${sessionResult.user_archetype}` : ""}
             </div>
-            {detectedProfiles.map(p => (
-              <div key={p.speaker_id} style={{
-                background: "var(--bg-elevated)", borderRadius: 12, padding: "14px 18px", marginBottom: 8,
-                borderLeft: `3px solid ${p.is_existing ? "#0EA5E9" : "var(--gold)"}`,
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <div>
-                  {p.is_existing ? (
-                    <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                      {p.suggested_name} · <span style={{ color: "#0EA5E9", fontSize: 12 }}>{p.archetype}</span>
-                      <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 8 }}>profile updated</span>
-                    </div>
-                  ) : (
+            {detectedProfiles.map(p => {
+              const abbrev = ARCHETYPE_ABBREV[p.archetype] || p.archetype?.slice(0, 3).toUpperCase() || "?";
+              const accentColor = p.is_existing ? "#0EA5E9" : "var(--gold)";
+              return (
+                <div key={p.speaker_id} style={{
+                  background: "var(--bg-elevated)", borderRadius: 12, padding: "14px 18px", marginBottom: 8,
+                  borderLeft: `3px solid ${accentColor}`,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <input
-                        defaultValue={p.confirmed ? p.suggested_name : speakerNames[p.speaker_id] || p.suggested_name || p.speaker_id}
-                        onBlur={e => confirmProfile(p.speaker_id, e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                        style={{
-                          fontSize: 13, color: "var(--text-secondary)", fontWeight: 600,
-                          background: "transparent", border: "1px solid transparent", borderRadius: 6,
-                          padding: "2px 6px", outline: "none", cursor: "text",
-                        }}
-                        onFocus={e => { e.target.style.borderColor = "var(--border-subtle)"; }}
-                      />
-                      <span style={{ fontSize: 12, color: "var(--gold)" }}>{p.archetype}</span>
-                      <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>new profile</span>
+                      {/* Archetype badge */}
+                      <span style={{
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        width: 32, height: 32, borderRadius: 8,
+                        background: `${accentColor}22`, color: accentColor,
+                        fontSize: 11, fontWeight: 700, fontFamily: MONO, letterSpacing: 0.5,
+                      }}>{abbrev}</span>
+                      {p.is_existing ? (
+                        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>
+                          {p.suggested_name}
+                        </span>
+                      ) : (
+                        <input
+                          defaultValue={p.confirmed ? p.suggested_name : speakerNames[p.speaker_id] || p.suggested_name || p.speaker_id}
+                          onBlur={e => confirmProfile(p.speaker_id, e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          style={{
+                            fontSize: 14, color: "var(--text-secondary)", fontWeight: 600,
+                            background: "transparent", border: "1px solid transparent", borderRadius: 6,
+                            padding: "2px 6px", outline: "none", cursor: "text",
+                          }}
+                          onFocus={e => { e.target.style.borderColor = "var(--border-subtle)"; }}
+                        />
+                      )}
                     </div>
-                  )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 12, color: accentColor, fontWeight: 500 }}>{p.archetype}</span>
+                      <span style={{
+                        fontSize: 10, color: "var(--text-tertiary)", fontFamily: MONO,
+                      }}>{Math.round(p.confidence * 100)}%</span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    {p.is_existing ? "profile updated" : "new profile"}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
 
@@ -1851,10 +1917,22 @@ export function Overlay(): React.ReactElement {
   // SCREEN: PROFILES
   // ═════════════════════════════════════════════════════════════════════════
   if (screen === "profiles") {
+    const returnScreen = profilePickerReturn;
+    const isSessionPicker = returnScreen === "setup";
     return shell(
       <div style={{ animation: "fadeIn 200ms ease-out" }}>
-        {topBar("Profiles", () => setScreen("home"))}
-        <ProfilesPane onBack={() => setScreen("home")} />
+        {topBar(isSessionPicker ? "Add to session" : "Profiles", () => setScreen(returnScreen))}
+        <ProfilesPane
+          onBack={() => setScreen(returnScreen)}
+          onAddToSession={isSessionPicker ? (profile) => {
+            setSetupParticipants(prev => {
+              if (prev.some(p => p.id === profile.id)) return prev;
+              return [...prev, { id: profile.id, name: profile.name, archetype: profile.archetype }];
+            });
+            setScreen("setup");
+          } : undefined}
+          selectedIds={isSessionPicker ? setupParticipants.map(p => p.id) : undefined}
+        />
       </div>,
     );
   }

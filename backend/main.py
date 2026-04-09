@@ -43,6 +43,7 @@ Server → client:
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import os
@@ -129,6 +130,27 @@ _DEFAULT_USER_ID = "local-user"        # single-user V1 app
 _USER_SPEAKER_ID = "user"              # deterministic — mic pipe guarantees this
 _DEFAULT_MIC_PIPE_PATH = "/tmp/persuasion_mic.pipe"
 
+
+def is_echo(text: str, recent_mic_texts: collections.deque[str], threshold: float = 0.6) -> bool:
+    """Return True if text overlaps significantly with recent mic utterances.
+
+    Used to filter out the user's own voice picked up by ScreenCaptureKit
+    on the system audio stream.
+    """
+    if not text.strip() or not recent_mic_texts:
+        return False
+    words = set(text.lower().split())
+    if len(words) < 3:
+        return False
+    for mic_text in recent_mic_texts:
+        mic_words = set(mic_text.lower().split())
+        if not mic_words:
+            continue
+        overlap = len(words & mic_words) / max(len(words), 1)
+        if overlap >= threshold:
+            return True
+    return False
+
 # In-memory sparring sessions (no DB persistence — text-only practice mode).
 _sparring_sessions: dict[str, SparringSession] = {}
 
@@ -203,6 +225,10 @@ class SessionPipeline:
 
         self.observer.add_utterance(speaker_id, text)
 
+        # Auto-detect user archetype mid-session (every 5th user utterance)
+        if user_is_speaking and self.observer.utterance_count >= 5 and self.observer.utterance_count % 5 == 0:
+            self._update_user_archetype()
+
         # Pass the last 10 utterances so the coaching engine has conversation
         # context (not just the current utterance).
         recent = self.utterances[-10:] if self.utterances else []
@@ -237,6 +263,38 @@ class SessionPipeline:
             "shortcut_events": self.elm_detector.shortcut_events,
             "consensus_events": self.elm_detector.consensus_events,
         }
+
+    def _update_user_archetype(self) -> None:
+        """
+        Classify the user's archetype from accumulated behavioral signals.
+
+        Uses the same quadrant logic as ParticipantProfiler: focus/stance scores
+        mapped to Architect/Firestarter/Inquisitor/Bridge Builder.
+        Triggers every 5th user utterance so the coaching engine can use the
+        user's actual style (not just "Unknown" or a stale pre-set value).
+        """
+        from backend.profiler import _aggregate_signals, _PROFILER_NEUTRAL_BAND, classify_from_scores
+
+        signals = list(self.observer._signals)  # snapshot to avoid mutation during iteration
+        if not signals:
+            return
+
+        focus, stance, confidence = _aggregate_signals(signals)
+
+        focus_in_band = abs(focus) <= _PROFILER_NEUTRAL_BAND
+        stance_in_band = abs(stance) <= _PROFILER_NEUTRAL_BAND
+
+        if focus_in_band and stance_in_band:
+            return  # Not enough signal yet
+
+        archetype = classify_from_scores(focus, stance)
+
+        if self.engine.user_archetype != archetype:
+            logger.info(
+                "User archetype auto-detected: %s (focus=%.1f stance=%.1f confidence=%.3f, %d utterances)",
+                archetype, focus, stance, confidence, len(signals),
+            )
+            self.engine.user_archetype = archetype
 
     def reset(self) -> None:
         """Release all session state. Call after the session ends."""
@@ -284,6 +342,60 @@ def _get_calendar_service() -> CalendarService | None:
     if not client_id or not client_secret:
         return None
     return CalendarService(client_id=client_id, client_secret=client_secret)
+
+
+async def _auto_seed_from_calendar() -> list[dict]:
+    """
+    Query Google Calendar for a meeting happening now (or starting within 15 min).
+
+    Returns a list of ``{"name": ..., "archetype": "Unknown"}`` dicts for each
+    attendee found. If calendar is not connected or no current meeting is found,
+    returns an empty list.
+    """
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)  # capture before async call to avoid drift
+
+    svc = _get_calendar_service()
+    if svc is None:
+        return []
+    try:
+        meetings = await svc.get_upcoming_meetings(hours_ahead=1)
+    except Exception as exc:
+        logger.debug("Calendar auto-seed: failed to fetch meetings: %s", exc)
+        return []
+
+    if not meetings:
+        return []
+
+    # Find a meeting that is currently happening or starts within 15 minutes
+    best = None
+    for m in meetings:
+        if m.start_dt <= now <= m.end_dt:
+            best = m
+            break
+        if now <= m.start_dt <= now + timedelta(minutes=15):
+            best = m
+            break
+
+    if best is None or not best.attendee_names:
+        return []
+
+    # Look up each attendee name in the participant DB to pull their archetype
+    result: list[dict] = []
+    try:
+        from backend.identity import resolve_speaker
+        async with get_db_session() as db:
+            for name in best.attendee_names:
+                archetype = "Unknown"
+                existing = await resolve_speaker(db, _DEFAULT_USER_ID, name)
+                if existing and existing.ps_type:
+                    archetype = existing.ps_type
+                result.append({"name": name, "archetype": archetype})
+    except Exception as exc:
+        logger.debug("Calendar auto-seed: archetype lookup failed, falling back: %s", exc)
+        result = [{"name": n, "archetype": "Unknown"} for n in best.attendee_names]
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1178,6 +1290,7 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
             await ws.close(code=4004, reason="Session not found")
             return
         user_speaker = _USER_SPEAKER_ID
+        meeting_title = row.title or ""
 
     await ws.accept()
 
@@ -1199,6 +1312,26 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
 
     user_archetype = coaching_ctx.get("user_archetype")
     participants_info = coaching_ctx.get("participants", [])
+
+    # ── Calendar auto-seed: merge calendar attendees with manual selections ──
+    # If the user didn't add participants manually, try to auto-discover from
+    # Google Calendar. If they did add some, merge in any calendar attendees
+    # not already in the list (by name match).
+    try:
+        calendar_participants = await _auto_seed_from_calendar()
+        if calendar_participants:
+            existing_names = {p.get("name", "").lower() for p in participants_info}
+            for cp in calendar_participants:
+                if cp["name"].lower() not in existing_names:
+                    participants_info.append(cp)
+                    existing_names.add(cp["name"].lower())
+            logger.info(
+                "Calendar auto-seed: added %d attendees (total %d participants)",
+                len(calendar_participants),
+                len(participants_info),
+            )
+    except Exception:
+        pass  # Non-critical — calendar may not be connected
 
     # Enrich participants with behavioral fingerprints from past sessions
     if participants_info:
@@ -1240,8 +1373,8 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         except Exception:
             pass  # Non-critical — proceed without effectiveness data
 
-    # Average adapted cadence across all pairings; fall back to the 30s default
-    session_cadence_s = sum(cadence_samples) / len(cadence_samples) if cadence_samples else 30.0
+    # Average adapted cadence across all pairings; fall back to the 15s default
+    session_cadence_s = sum(cadence_samples) / len(cadence_samples) if cadence_samples else 15.0
 
     engine = CoachingEngine(
         user_speaker=user_speaker,
@@ -1250,6 +1383,7 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         participants=participants_info,
         effectiveness_data=effectiveness_data or None,
         general_cadence_floor_s=session_cadence_s,
+        user_id=_DEFAULT_USER_ID,
     )
 
     pipeline = SessionPipeline(
@@ -1263,10 +1397,12 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     pipeline.session_context = coaching_ctx.get("context", "unknown")  # type: ignore[attr-defined]
 
     # Load user's profile snapshot for personalized coaching
+    user_display_name = ""
     try:
         async with get_db_session() as db:
             user = await db.get(User, _DEFAULT_USER_ID)
             if user is not None:
+                user_display_name = user.display_name or ""
                 ctx_rows = await db.execute(
                     select(ContextProfile).where(ContextProfile.user_id == user.id)
                 )
@@ -1293,12 +1429,20 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     # Track which speakers have been notified to the frontend as detected profiles
     _notified_profiles: set[str] = set()
 
+    # ── Echo filter: prevent user's voice on system audio from creating
+    #    false counterpart utterances. ScreenCaptureKit picks up all audio
+    #    including the user's own voice from the call. We keep a small ring
+    #    of recent mic texts and drop system utterances with high overlap.
+    _recent_mic_texts: collections.deque[str] = collections.deque(maxlen=10)
+
     # ── Audio pipeline (dual-pipe: mic + system) ──────────────────────
 
     async def _on_mic_utterance(
         speaker_id: str, text: str, is_final: bool, start_s: float, end_s: float
     ) -> None:
         """Mic stream = always the user. Override speaker_id."""
+        if is_final and text.strip():
+            _recent_mic_texts.append(text)
         await _handle_utterance(
             ws, pipeline,
             {"speaker_id": _USER_SPEAKER_ID, "text": text,
@@ -1309,6 +1453,10 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         speaker_id: str, text: str, is_final: bool, start_s: float, end_s: float
     ) -> None:
         """System audio = counterparts. Prefix to distinguish from user."""
+        # Drop utterances that are echoes of the user's own mic audio
+        if is_echo(text, _recent_mic_texts):
+            logger.debug("Echo filter: dropped system utterance matching mic: %s", text[:60])
+            return
         prefixed_id = speaker_id.replace("speaker_", "counterpart_")
         await _handle_utterance(
             ws, pipeline,
@@ -1457,8 +1605,13 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
 
         return _on_audio_chunk
 
+    _dual_pipe_mode = os.path.exists(_DEFAULT_MIC_PIPE_PATH)
+
     _on_mic_chunk = _make_audio_chunk_handler(mic_transcriber, "mic", is_mic=True)
-    _on_system_chunk = _make_audio_chunk_handler(system_transcriber, "system", is_mic=False)
+    # In single-pipe mode, system handler also meters audio levels
+    _on_system_chunk = _make_audio_chunk_handler(
+        system_transcriber, "system", is_mic=not _dual_pipe_mode,
+    )
 
     # Dual readers: mic pipe (no silence watchdog) + system pipe (with watchdog)
     system_reader = AudioPipeReader(
@@ -1466,7 +1619,6 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         on_silence_timeout=_on_silence,
     )
     mic_reader: AudioPipeReader | None = None
-    _dual_pipe_mode = os.path.exists(_DEFAULT_MIC_PIPE_PATH)
 
     if _dual_pipe_mode:
         mic_reader = AudioPipeReader(
@@ -1519,6 +1671,28 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
 
     asyncio.ensure_future(_check_audio_started())
 
+    # ── Initial coaching prompt (fires once at session start, background) ──
+    async def _send_initial_prompt() -> None:
+        try:
+            initial = await engine.initial_prompt(
+                user_profile=pipeline.user_profile if hasattr(pipeline, "user_profile") else None,
+                user_display_name=user_display_name,
+                meeting_title=meeting_title,
+            )
+            if initial:
+                await ws.send_json({
+                    "type": "coaching_prompt",
+                    "layer": initial.layer,
+                    "text": initial.text,
+                    "is_fallback": initial.is_fallback,
+                    "triggered_by": initial.triggered_by,
+                    "speaker_id": initial.speaker_id,
+                })
+        except Exception:
+            logger.debug("Initial coaching prompt failed", exc_info=True)
+
+    asyncio.ensure_future(_send_initial_prompt())
+
     # ── Message loop ──────────────────────────────────────────────────────
 
     try:
@@ -1566,7 +1740,24 @@ async def _handle_message(
         await ws.send_json({"type": "pong"})
 
     elif msg_type == "session_end":
-        await _handle_session_end(ws, pipeline)
+        try:
+            await _handle_session_end(ws, pipeline)
+        except Exception:
+            logger.exception("Error during session end — sending fallback session_ended")
+            try:
+                await ws.send_json({
+                    "type": "session_ended",
+                    "session_id": pipeline.session_id,
+                    "persuasion_score": None,
+                    "growth_delta": None,
+                    "breakdown": {"timing": 0, "ego_safety": 0, "convergence": 0},
+                    "participants": [],
+                    "user_archetype": None,
+                })
+                await asyncio.sleep(0.05)
+                await ws.close()
+            except Exception:
+                pass
         return True
 
     elif msg_type == "confirm_profile":
@@ -1955,7 +2146,7 @@ async def _handle_session_end(
                 )
 
                 # ── Aggregate coaching effectiveness ───────────────────
-                user_arch = pipeline.engine._user_archetype
+                user_arch = pipeline.engine.user_archetype
                 session_ctx = row.context or "unknown"
                 re_query = await db.execute(
                     select(Prompt).where(
@@ -2044,6 +2235,22 @@ async def _handle_session_end(
                 # Empty session (no speech detected) — delete the row
                 await db.delete(row)
 
+    # Build participant summary for session_ended message
+    _ended_participants: list[dict] = []
+    if has_utterances:
+        for sid in pipeline.profiler.speakers():
+            cls = pipeline.profiler.get_classification(sid)
+            if cls:
+                resolved_name = ""
+                if hasattr(pipeline, "resolver") and pipeline.resolver:
+                    resolved_name = pipeline.resolver.resolve(sid)
+                _ended_participants.append({
+                    "speaker_id": sid,
+                    "name": resolved_name or sid,
+                    "archetype": cls.superpower,
+                    "confidence": round(cls.confidence, 2),
+                })
+
     await ws.send_json(
         {
             "type": "session_ended",
@@ -2055,6 +2262,8 @@ async def _handle_session_end(
                 "ego_safety": scores["ego_safety_score"],
                 "convergence": scores["convergence_score"],
             },
+            "participants": _ended_participants,
+            "user_archetype": pipeline.engine.user_archetype if has_utterances else None,
         }
     )
 
@@ -2067,9 +2276,36 @@ async def _handle_session_end(
 
     # ── Post-session background tasks (do not block WebSocket close) ──
     if has_utterances:
+        # Collect per-participant profiles for the debrief prompt
+        _debrief_participants: list[dict] = []
+        for sid in pipeline.profiler.speakers():
+            cls = pipeline.profiler.get_classification(sid)
+            if cls:
+                resolved_name = ""
+                if hasattr(pipeline, "resolver") and pipeline.resolver:
+                    resolved_name = pipeline.resolver.resolve(sid)
+                evidence = pipeline.profiler.get_key_evidence(sid, top_n=3)
+                elm_episodes = pipeline.elm_detector.get_episode_history(sid)
+                _debrief_participants.append({
+                    "speaker_id": sid,
+                    "name": resolved_name or sid,
+                    "archetype": cls.superpower,
+                    "confidence": cls.confidence,
+                    "focus_score": cls.focus_score,
+                    "stance_score": cls.stance_score,
+                    "utterance_count": cls.utterance_count,
+                    "key_evidence": evidence,
+                    "elm_episodes": elm_episodes,
+                })
+        user_archetype = pipeline.engine.user_archetype
+
         bg = getattr(ws.app.state, "background_tasks", None)
         t1 = asyncio.create_task(
-            _generate_session_debrief(pipeline.session_id, pipeline.utterances, scores)
+            _generate_session_debrief(
+                pipeline.session_id, pipeline.utterances, scores,
+                participants=_debrief_participants,
+                user_archetype=user_archetype,
+            )
         )
         t2 = asyncio.create_task(
             _update_coaching_playbook(pipeline, scores)
@@ -2085,10 +2321,13 @@ async def _generate_session_debrief(
     session_id: str,
     utterances: list[dict],
     scores: dict,
+    participants: list[dict] | None = None,
+    user_archetype: str = "Unknown",
 ) -> None:
     """
     Generate a post-session coaching debrief with Claude Opus in the background.
 
+    Includes per-participant strategic analysis when participant profiles are available.
     Writes the result to MeetingSession.debrief_text.  Silently no-ops if the
     API key is missing or the call fails — the debrief is non-critical.
     """
@@ -2097,8 +2336,15 @@ async def _generate_session_debrief(
         return
 
     sample = utterances[-60:]
+
+    # Build transcript with resolved names
+    name_map: dict[str, str] = {}
+    if participants:
+        for p in participants:
+            name_map[p["speaker_id"]] = p.get("name", p["speaker_id"])
+
     transcript_lines = "\n".join(
-        f"{'[YOU]' if u['speaker'] == 'speaker_0' else u['speaker']}: {u['text'][:200]}"
+        f"{'[YOU]' if u['speaker'] == _USER_SPEAKER_ID else name_map.get(u['speaker'], u['speaker'])}: {u['text'][:200]}"
         for u in sample
     )
     score_summary = (
@@ -2109,22 +2355,92 @@ async def _generate_session_debrief(
     )
 
     speakers = set(u["speaker"] for u in utterances)
-    non_user = speakers - {"speaker_0"}
+    non_user = speakers - {_USER_SPEAKER_ID}
+
+    # Build per-participant profile section (cap at 10 to bound prompt size)
+    participant_section = ""
+    if participants:
+        participants = sorted(participants, key=lambda p: p.get("utterance_count", 0), reverse=True)[:10]
+        lines = []
+        for p in participants:
+            name = p.get("name", p["speaker_id"])
+            arch = p.get("archetype", "Unknown")
+            conf = p.get("confidence", 0)
+            elm = p.get("elm_episodes", [])
+            evidence = p.get("key_evidence", [])
+            utt_count = p.get("utterance_count", 0)
+
+            profile_line = f"  {name}: {arch} (confidence {conf:.0%}, {utt_count} utterances)"
+            if elm:
+                elm_summary = ", ".join(set(elm))
+                profile_line += f"\n    ELM episodes: {elm_summary} ({len(elm)} total)"
+            if evidence:
+                top_utt = evidence[0].get("text", "")[:100]
+                profile_line += f'\n    Key utterance: "{top_utt}"'
+            lines.append(profile_line)
+
+        participant_section = (
+            "PARTICIPANT PROFILES (detected from speech patterns)\n"
+            + "\n".join(lines) + "\n\n"
+        )
+
+    # Archetype pairing context
+    pairing_section = ""
+    if participants and user_archetype != "Unknown":
+        from backend.coaching_engine import _archetype_pairing_advice
+        pairing_lines = []
+        for p in participants:
+            name = p.get("name", p["speaker_id"])
+            arch = p.get("archetype", "Unknown")
+            advice = _archetype_pairing_advice(user_archetype, arch)
+            pairing_lines.append(f"  You ({user_archetype}) → {name} ({arch}): {advice}")
+        pairing_section = (
+            "ARCHETYPE PAIRING DYNAMICS\n"
+            + "\n".join(pairing_lines) + "\n\n"
+        )
 
     prompt = (
-        "You are a $500/hr executive communication coach. You use the "
-        "Communicator Superpower framework (Architect=Logic+Analyze, "
-        "Firestarter=Narrative+Advocate, Inquisitor=Logic+Advocate, "
-        "Bridge Builder=Narrative+Analyze).\n\n"
-        f"SCORES\n{score_summary}\n"
+        "You are a $500/hr executive communication coach who specializes in "
+        "persuasion dynamics and team communication patterns. You use the "
+        "Communicator Superpower framework:\n"
+        "- Architect: Logic + Analyze. Data-first, systematic, needs structure.\n"
+        "- Firestarter: Narrative + Advocate. Energy-driven, inspires through story.\n"
+        "- Inquisitor: Logic + Advocate. Questions everything, needs evidence.\n"
+        "- Bridge Builder: Narrative + Analyze. Reads the room, builds consensus.\n\n"
+        "Engagement states: 'thinking it through' = weighing evidence and logic. "
+        "'going along' = agreeing based on cues, authority, or social proof without deep thought. "
+        "'defensive' = feeling personally attacked, unable to process logic.\n\n"
+        f"USER ARCHETYPE: {user_archetype}\n\n"
+        f"SCORES\n{score_summary}\n\n"
+        f"{participant_section}"
+        f"{pairing_section}"
         f"SPEAKERS: {len(speakers)} total ({len(non_user)} counterparts)\n\n"
         f"TRANSCRIPT ({len(sample)} turns)\n{transcript_lines}\n\n"
-        "Write a concise coaching debrief covering:\n"
-        "1. TEAM DYNAMICS — archetype distribution, complementary pairings, gaps\n"
-        "2. KEY MOMENTS — where persuasion succeeded or failed, and why\n"
-        "3. YOUR PERFORMANCE — what you did well, what you missed\n"
-        "4. COACHING PRESCRIPTION — one concrete behavioral change for next time\n\n"
-        "Be specific — cite moments. Use second person. No filler."
+        "Write a coaching debrief with these 5 sections. Be specific, cite actual "
+        "moments from the transcript. Use second person for the coached user. "
+        "Name specific participants by name in every section.\n\n"
+        "1. PARTICIPANT MAP (2-3 sentences per person)\n"
+        "For each participant: their archetype, how they showed up in this meeting "
+        "(data-driven, narrative-driven, defensive, collaborative), and their "
+        "engagement state (thinking it through, going along, or defensive).\n\n"
+        "2. INTERACTION ANALYSIS (2-3 sentences per person)\n"
+        "How did you interact with each participant? What worked (convergence, "
+        "uptake moments) and what didn't (resistance, ego-threat triggers)? "
+        "Explain the archetype pairing dynamic at play.\n\n"
+        "3. KEY MOMENTS (2-3 specific moments)\n"
+        "Each moment must name the specific participant and explain the "
+        "archetype-driven reason it mattered. Were they thinking it through, going along, or defensive? "
+        "and how did you respond?\n\n"
+        "4. WHAT YOU DID WELL (2-3 specific examples)\n"
+        "Reinforce good practices. Cite specific moments where you read the room "
+        "correctly, matched your approach to someone's archetype, or recovered "
+        "from a difficult moment. Name the person and what you did.\n\n"
+        "5. STRATEGIC PLAYBOOK (one action item per person)\n"
+        "For each participant: one specific thing to do differently or keep doing "
+        "next time. Frame as: 'Next time with [Name]: [specific action] because "
+        "[archetype-driven reason].'\n\n"
+        "Write in direct, confident prose. No filler. Every sentence should contain "
+        "an insight the user could not derive from reading the transcript alone."
     )
 
     try:
@@ -2132,10 +2448,10 @@ async def _generate_session_debrief(
         response = await asyncio.wait_for(
             client.messages.create(
                 model="claude-opus-4-6",
-                max_tokens=1200,
+                max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
             ),
-            timeout=60.0,
+            timeout=90.0,
         )
         debrief = response.content[0].text.strip()
         async with get_db_session() as db:
@@ -2208,7 +2524,7 @@ async def _update_coaching_playbook(
             await update_coaching_bullets(
                 db=db,
                 user_id=pipeline.user_id,
-                user_archetype=pipeline.engine._user_archetype,
+                user_archetype=pipeline.engine.user_archetype,
                 session_id=pipeline.session_id,
                 session_summary=session_summary,
                 api_key=api_key,
@@ -2818,10 +3134,43 @@ async def retro_upload(
             job["scores"] = scores
             job["participants"] = list(participant_profiles.values())
 
+            # Enrich participant profiles with key evidence and ELM data for debrief
+            _retro_elm = ELMDetector(user_speaker=_USER_SPEAKER_ID)
+            for _eu in utterances:
+                _retro_elm.process_utterance(_eu["speaker_id"], _eu["text"])
+            for _pp in participant_profiles.values():
+                _sid = _pp["speaker_id"]
+                _pp["key_evidence"] = profiler.get_key_evidence(_sid, top_n=3)
+                _pp["elm_episodes"] = _retro_elm.get_episode_history(_sid)
+                _cls = profiler.get_classification(_sid)
+                if _cls:
+                    _pp["utterance_count"] = _cls.utterance_count
+                    _pp["focus_score"] = _cls.focus_score
+                    _pp["stance_score"] = _cls.stance_score
+
+            # Detect user archetype from retro transcript for debrief + ACE
+            _retro_observer = UserBehaviorObserver(user_speaker=_USER_SPEAKER_ID)
+            for _ru in utterances:
+                _retro_observer.add_utterance(_ru["speaker_id"], _ru["text"])
+            _retro_user_arch = "Unknown"
+            if _retro_observer.utterance_count >= 5:
+                from backend.profiler import _aggregate_signals, _PROFILER_NEUTRAL_BAND, classify_from_scores
+                _r_focus, _r_stance, _ = _aggregate_signals(list(_retro_observer._signals))
+                if not (abs(_r_focus) <= _PROFILER_NEUTRAL_BAND and abs(_r_stance) <= _PROFILER_NEUTRAL_BAND):
+                    _retro_user_arch = classify_from_scores(_r_focus, _r_stance)
+
             # Kick off debrief generation in background (non-blocking)
             if scores and utterances:
                 asyncio.create_task(
                     _generate_retro_debrief(job, session_id, utterances, scores)
+                )
+
+            # Feed retro analysis to ACE bullet store
+            if scores and utterances:
+                asyncio.create_task(
+                    _update_retro_coaching_bullets(
+                        session_id, _retro_user_arch, scores, utterances
+                    )
                 )
         except Exception as exc:
             logger.exception("[retro] job %s failed: %s", job_id, exc)
@@ -2838,7 +3187,7 @@ async def _generate_retro_debrief(
     utterances: list[dict],
     scores: dict,
 ) -> None:
-    """Generate exec-coach-level debrief for retro analysis."""
+    """Generate per-participant strategic debrief for retro analysis."""
     api_key = _load_settings().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         job["debrief"] = "Set an Anthropic API key in Settings to enable coaching debrief."
@@ -2846,8 +3195,15 @@ async def _generate_retro_debrief(
 
     # Build full transcript (up to 60 utterances for richer analysis)
     sample = utterances[-60:]
+    participants = job.get("participants", [])
+
+    # Build name map for transcript labels
+    name_map: dict[str, str] = {}
+    for p in participants:
+        name_map[p["speaker_id"]] = p.get("name", p["speaker_id"])
+
     transcript_lines = "\n".join(
-        f"{'[YOU]' if u['speaker_id'] == _USER_SPEAKER_ID else u['speaker_id']}: {u['text'][:200]}"
+        f"{'[YOU]' if u['speaker_id'] == _USER_SPEAKER_ID else name_map.get(u['speaker_id'], u['speaker_id'])}: {u['text'][:200]}"
         for u in sample
     )
     score_summary = (
@@ -2857,13 +3213,32 @@ async def _generate_retro_debrief(
         f"Convergence {scores['convergence_score']}/40)"
     )
 
-    # Include participant profiles if available
-    participants = job.get("participants", [])
-    profile_lines = ""
+    # Build per-participant profile section (cap at 10 to bound prompt size)
+    participant_section = ""
     if participants:
-        profile_lines = "PARTICIPANT PROFILES (detected from speech patterns)\n"
+        participants = sorted(participants, key=lambda p: p.get("utterance_count", 0), reverse=True)[:10]
+        lines = []
         for p in participants:
-            profile_lines += f"  {p['speaker_id']}: {p['archetype']} (confidence {p['confidence']:.0%})\n"
+            name = p.get("name", p["speaker_id"])
+            arch = p.get("archetype", "Unknown")
+            conf = p.get("confidence", 0)
+            elm = p.get("elm_episodes", [])
+            evidence = p.get("key_evidence", [])
+            utt_count = p.get("utterance_count", 0)
+
+            profile_line = f"  {name}: {arch} (confidence {conf:.0%}, {utt_count} utterances)"
+            if elm:
+                elm_summary = ", ".join(set(elm))
+                profile_line += f"\n    ELM episodes: {elm_summary} ({len(elm)} total)"
+            if evidence:
+                top_utt = evidence[0].get("text", "")[:100]
+                profile_line += f'\n    Key utterance: "{top_utt}"'
+            lines.append(profile_line)
+
+        participant_section = (
+            "PARTICIPANT PROFILES (detected from speech patterns)\n"
+            + "\n".join(lines) + "\n\n"
+        )
 
     # Identify unique speakers
     speakers = set(u["speaker_id"] for u in utterances)
@@ -2877,33 +3252,36 @@ async def _generate_retro_debrief(
         "- Firestarter: Narrative + Advocate. Energy-driven, inspires through story.\n"
         "- Inquisitor: Logic + Advocate. Questions everything, needs evidence.\n"
         "- Bridge Builder: Narrative + Analyze. Reads the room, builds consensus.\n\n"
-        "The two key axes are: Logic vs. Narrative (how they process) and "
-        "Advocate vs. Analyze (how they engage).\n\n"
-        "ELM (Elaboration Likelihood Model) context: people in Central Route mode "
-        "process through logic and evidence. People in Peripheral Route mode respond "
-        "to cues, authority, social proof. Ego-threatened people shut down Central "
-        "Route processing entirely.\n\n"
+        "Engagement states: 'thinking it through' = weighing evidence and logic. "
+        "'going along' = agreeing based on cues, authority, or social proof without deep thought. "
+        "'defensive' = feeling personally attacked, unable to process logic.\n\n"
         f"SCORES\n{score_summary}\n\n"
-        f"{profile_lines}\n"
+        f"{participant_section}"
         f"SPEAKERS: {len(speakers)} total ({len(non_user_speakers)} counterparts)\n\n"
         f"TRANSCRIPT ({len(sample)} turns)\n{transcript_lines}\n\n"
-        "Write a coaching debrief with the following sections. Be specific — cite "
-        "actual moments from the transcript. Use second person for the coached user.\n\n"
-        "1. TEAM DYNAMICS (2-3 sentences)\n"
-        "Analyze the archetype distribution in the room. Identify complementary "
-        "pairings (e.g. Firestarter-Architect) and gaps. What does the composition "
-        "mean for how ideas land?\n\n"
-        "2. KEY MOMENTS (2-3 sentences)\n"
-        "Identify the 1-2 most important moments in the conversation. Where did "
-        "persuasion succeed or fail? Why — was the room in Central or Peripheral "
-        "Route? Did anyone get ego-threatened?\n\n"
-        "3. YOUR PERFORMANCE (2-3 sentences)\n"
-        "What did you do well? Where did you miss? Be specific about what mode you "
-        "were in and whether it matched what the room needed.\n\n"
-        "4. COACHING PRESCRIPTION (2-3 sentences)\n"
-        "One concrete behavioral change for the next meeting with this group. "
-        "Frame it as: when [specific situation], do [specific action] because "
-        "[specific reason based on the audience's processing style].\n\n"
+        "Write a coaching debrief with these 5 sections. Be specific, cite actual "
+        "moments from the transcript. Use second person for the coached user. "
+        "Name specific participants by name in every section.\n\n"
+        "1. PARTICIPANT MAP (2-3 sentences per person)\n"
+        "For each participant: their archetype, how they showed up in this meeting "
+        "(data-driven, narrative-driven, defensive, collaborative), and their "
+        "engagement state (thinking it through, going along, or defensive).\n\n"
+        "2. INTERACTION ANALYSIS (2-3 sentences per person)\n"
+        "How did you interact with each participant? What worked (convergence, "
+        "uptake moments) and what didn't (resistance, ego-threat triggers)? "
+        "Explain the archetype pairing dynamic at play.\n\n"
+        "3. KEY MOMENTS (2-3 specific moments)\n"
+        "Each moment must name the specific participant and explain the "
+        "archetype-driven reason it mattered. Were they thinking it through, going along, or defensive? "
+        "and how did you respond?\n\n"
+        "4. WHAT YOU DID WELL (2-3 specific examples)\n"
+        "Reinforce good practices. Cite specific moments where you read the room "
+        "correctly, matched your approach to someone's archetype, or recovered "
+        "from a difficult moment. Name the person and what you did.\n\n"
+        "5. STRATEGIC PLAYBOOK (one action item per person)\n"
+        "For each participant: one specific thing to do differently or keep doing "
+        "next time. Frame as: 'Next time with [Name]: [specific action] because "
+        "[archetype-driven reason].'\n\n"
         "Write in direct, confident prose. No filler. Every sentence should contain "
         "an insight the user could not derive from reading the transcript alone."
     )
@@ -2913,10 +3291,10 @@ async def _generate_retro_debrief(
         response = await asyncio.wait_for(
             client.messages.create(
                 model="claude-opus-4-6",
-                max_tokens=1200,
+                max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
             ),
-            timeout=60.0,
+            timeout=90.0,
         )
         debrief = response.content[0].text.strip()
         job["debrief"] = debrief
@@ -2928,6 +3306,50 @@ async def _generate_retro_debrief(
     except Exception as exc:
         logger.warning("Retro debrief failed for session %s: %s", session_id, exc)
         job["debrief"] = "Coaching debrief could not be generated."
+
+
+async def _update_retro_coaching_bullets(
+    session_id: str,
+    user_archetype: str,
+    scores: dict,
+    utterances: list[dict],
+) -> None:
+    """Feed retro analysis results into the ACE coaching bullet store."""
+    try:
+        from backend.coaching_bullets import update_coaching_bullets
+
+        user_utts = sum(1 for u in utterances if u["speaker_id"] == _USER_SPEAKER_ID)
+        total_utts = len(utterances)
+        talk_ratio = user_utts / total_utts if total_utts > 0 else 0.0
+
+        session_summary = {
+            "persuasion_score": scores.get("persuasion_score"),
+            "timing_score": scores.get("timing_score"),
+            "ego_safety_score": scores.get("ego_safety_score"),
+            "convergence_score": scores.get("convergence_score"),
+            "ego_threat_events": scores.get("ego_threat_events", 0),
+            "talk_time_ratio": round(talk_ratio, 2),
+            "total_utterances": total_utts,
+            "context": "retro",
+            "prompt_results": [],  # No live prompts in retro analysis
+        }
+
+        api_key = _load_settings().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+
+        async with get_db_session() as db:
+            await update_coaching_bullets(
+                db=db,
+                user_id=_DEFAULT_USER_ID,
+                user_archetype=user_archetype,
+                session_id=session_id,
+                session_summary=session_summary,
+                api_key=api_key,
+            )
+    except Exception as exc:
+        logger.warning(
+            "Retro coaching bullet update failed for session %s: %s",
+            session_id, exc,
+        )
 
 
 @app.get("/retro/jobs/{job_id}")

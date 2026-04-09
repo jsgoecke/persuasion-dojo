@@ -477,3 +477,96 @@ class TestIdempotent:
     async def test_send_before_connect_is_silent(self):
         hybrid, *_ = _make_hybrid()
         await hybrid.send_audio(b"\x01\x02")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Status event detail content
+# ---------------------------------------------------------------------------
+
+class TestStatusEventDetails:
+    """
+    Verify the content and structure of status events emitted by
+    HybridTranscriber. The frontend uses these to show the Cloud/Local badge.
+
+    Regression: during the v0.11.0 debug session, the user couldn't tell
+    whether Deepgram or Moonshine was active. These events are the data
+    source for the transcription backend indicator badge.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cloud_mode_emits_using_cloud_event(self):
+        """Cloud mode must emit exactly one 'using_cloud' event on connect."""
+        hybrid, _, events, _, _, hc = _make_hybrid(mode="cloud")
+        with patch("backend.hybrid_transcription.deepgram_health_check", return_value=hc):
+            await hybrid.connect()
+
+        cloud_events = [e for e in events if e[0] == "using_cloud"]
+        assert len(cloud_events) == 1, f"Expected 1 using_cloud event, got {cloud_events}"
+        await hybrid.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_local_mode_emits_using_local_event(self):
+        """Local mode must emit exactly one 'using_local' event on connect."""
+        hybrid, _, events, _, _, _ = _make_hybrid(mode="local")
+        await hybrid.connect()
+
+        local_events = [e for e in events if e[0] == "using_local"]
+        assert len(local_events) == 1, f"Expected 1 using_local event, got {local_events}"
+        await hybrid.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_fallback_event_contains_reason_key(self):
+        """Fallback events must include a 'reason' key in the detail dict."""
+        hybrid, _, events, _, _, _ = _make_hybrid(
+            mode="auto", api_key="",
+        )
+        await hybrid.connect()
+
+        fallback_events = [e for e in events if e[0] in ("fallback_activated", "using_local")]
+        assert len(fallback_events) >= 1
+        # At least one event should explain why fallback was used
+        reasons = [e[1].get("reason") for e in events if e[1].get("reason")]
+        assert len(reasons) >= 1, f"No reason given for fallback. Events: {events}"
+        await hybrid.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_auto_healthy_emits_using_cloud(self):
+        """Auto mode with healthy Deepgram must emit 'using_cloud'."""
+        hybrid, _, events, _, _, hc = _make_hybrid(mode="auto")
+        with patch("backend.hybrid_transcription.deepgram_health_check", return_value=hc):
+            await hybrid.connect()
+
+        event_names = [e[0] for e in events]
+        assert "using_cloud" in event_names
+        assert "using_local" not in event_names
+        assert "fallback_activated" not in event_names
+        await hybrid.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_auto_unhealthy_emits_fallback(self):
+        """Auto mode with failing health check must emit fallback, not using_cloud."""
+        hybrid, _, events, _, _, _ = _make_hybrid(
+            mode="auto",
+            health_check_result=(False, "HTTP 401"),
+        )
+        with patch("backend.hybrid_transcription.deepgram_health_check",
+                   return_value=(False, "HTTP 401")):
+            await hybrid.connect()
+
+        event_names = [e[0] for e in events]
+        assert "using_cloud" not in event_names
+        has_fallback = "fallback_activated" in event_names or "using_local" in event_names
+        assert has_fallback, f"Expected fallback event, got {event_names}"
+        await hybrid.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_status_events_on_connect(self):
+        """Connect should emit exactly one backend selection event, not multiples."""
+        hybrid, _, events, _, _, _ = _make_hybrid(mode="local")
+        await hybrid.connect()
+
+        backend_events = [e for e in events if e[0] in ("using_cloud", "using_local")]
+        assert len(backend_events) == 1, (
+            f"Expected exactly 1 backend event, got {len(backend_events)}: {backend_events}"
+        )
+        await hybrid.disconnect()

@@ -89,6 +89,7 @@ class MoonshineTranscriber:
         self._transcriber_factory = _transcriber_factory
 
         self._transcriber: Any = None
+        self._stream: Any = None
         self._connected = False
         self._session_start: float = 0.0
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -112,12 +113,14 @@ class MoonshineTranscriber:
         if self._transcriber_factory is not None:
             # Test injection
             self._transcriber = self._transcriber_factory()
+            self._stream = self._transcriber  # tests use a flat fake
         else:
             # Lazy-load model in thread pool to avoid blocking the event loop
             self._transcriber = await asyncio.to_thread(self._load_model)
+            self._stream = self._transcriber.create_stream(update_interval=0.5)
 
-        self._transcriber.add_listener(self._on_transcript_event)
-        self._transcriber.start()
+        self._stream.add_listener(self._on_transcript_event)
+        self._stream.start()
         self._connected = True
 
         await self._emit_status("connected", {"backend": "moonshine"})
@@ -129,7 +132,7 @@ class MoonshineTranscriber:
 
         Converts 16-bit signed LE PCM to float32 [-1.0, 1.0] as Moonshine expects.
         """
-        if not self._connected or not data or self._transcriber is None:
+        if not self._connected or not data or self._stream is None:
             return
 
         # Convert PCM int16 LE → float32 normalized
@@ -144,7 +147,7 @@ class MoonshineTranscriber:
             return
 
         try:
-            self._transcriber.add_audio(samples_float, 16000)
+            self._stream.add_audio(samples_float, 16000)
         except Exception as exc:
             logger.warning("Moonshine add_audio error: %s", exc)
 
@@ -154,12 +157,12 @@ class MoonshineTranscriber:
             return
         self._connected = False
 
-        if self._transcriber is not None:
+        if self._stream is not None:
             try:
-                self._transcriber.stop()
-                self._transcriber.remove_all_listeners()
+                self._stream.stop()
+                self._stream.remove_all_listeners()
             except Exception as exc:
-                logger.warning("Moonshine stop error: %s", exc)
+                logger.warning("Moonshine stream stop error: %s", exc)
 
         # Flush any pending text as a final utterance
         if self._current_text.strip():
@@ -180,14 +183,21 @@ class MoonshineTranscriber:
                 pass
             self._current_text = ""
 
+        if self._transcriber is not None:
+            try:
+                self._transcriber.close()
+            except Exception:
+                pass
+
+        self._stream = None
         self._transcriber = None
         logger.info("MoonshineTranscriber disconnected")
 
     async def finalize(self) -> None:
         """Force processing of buffered audio."""
-        if self._transcriber is not None and self._connected:
+        if self._stream is not None and self._connected:
             try:
-                self._transcriber.update_transcription()
+                self._stream.update_transcription()
             except Exception as exc:
                 logger.warning("Moonshine finalize error: %s", exc)
 
@@ -206,16 +216,16 @@ class MoonshineTranscriber:
             logger.info("Moonshine: reusing cached model (%s)", cache_key)
             return _MODEL_CACHE[cache_key]
 
-        from moonshine_voice import ModelArch, get_model_path
+        from moonshine_voice import ModelArch, get_model_for_language
         from moonshine_voice.transcriber import Transcriber as MVTranscriber
 
-        model_path = get_model_path(self._language)
         arch = getattr(ModelArch, self._model_arch)
+        model_path, resolved_arch = get_model_for_language(self._language, arch)
 
         logger.info("Moonshine: loading model %s from %s", self._model_arch, model_path)
         transcriber = MVTranscriber(
-            model_path=model_path,
-            model_arch=arch,
+            model_path=str(model_path),
+            model_arch=resolved_arch,
         )
 
         _MODEL_CACHE[cache_key] = transcriber
@@ -237,8 +247,8 @@ class MoonshineTranscriber:
             return
 
         line = event.line
-        text = " ".join(w.text for w in line.words) if hasattr(line, "words") and line.words else ""
-        if not text.strip():
+        text = line.text if hasattr(line, "text") else ""
+        if not text or not text.strip():
             return
 
         elapsed = time.monotonic() - self._session_start
@@ -254,14 +264,17 @@ class MoonshineTranscriber:
             self._line_start_time = elapsed
             self._current_text = text
             is_final = False
+        elif hasattr(line, "is_complete") and line.is_complete:
+            # Line completed
+            self._current_text = ""
+            is_final = True
         elif line.is_updated and line.has_text_changed:
             # Interim update
             self._current_text = text
             is_final = False
         else:
-            # Line completed (not new, not updated with changed text)
-            self._current_text = ""
-            is_final = True
+            # No text change, skip
+            return
 
         try:
             asyncio.run_coroutine_threadsafe(

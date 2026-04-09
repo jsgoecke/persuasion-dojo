@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.2.0] - 2026-04-09
+
+### Added
+- Opening coaching prompt fires at session start with personalized welcome: user name, archetype profile, participant roster with pairing advice, and learned coaching bullets from prior sessions.
+- Self-layer coaching now fires on user utterances, not just counterpart turns. Enables "you've been advocating for 4 minutes, ask a question" style coaching.
+- Session-end safety net: if backend crashes during scoring, overlay still shows debrief screen with a fallback result instead of hanging.
+- 4 new initial prompt tests covering context shifts, confidence lines, fingerprint data, and whitespace-only name edge case.
+
+### Changed
+- General coaching cadence floor reduced from 30s to 15s for faster feedback in fast-moving meetings.
+- ELM-triggered prompts (audience layer) remain counterpart-only. Self-layer general prompts fire on both speakers.
+
+### Fixed
+- `user_display_name.split()[0]` crash when display name is whitespace-only (e.g. `"   "`).
+- CoachingEngine `user_id` was not passed from session handler, preventing ACE coaching bullets from loading.
+- Frontend fallback `persuasion_score` changed from `0` to `null` so fallback results are distinguishable from real zero scores.
+- `test_missing_deepgram_key_cloud_mode_closes_cleanly` patched to clear `os.environ` so real Deepgram key doesn't leak through in test.
+
+## [0.10.1.0] - 2026-04-08
+
+### Added
+- Per-person real-time coaching: coaching prompts now name the specific counterpart and tailor advice to their Superpower archetype pairing with yours. "Sarah is an Inquisitor, lead with data" instead of generic tips.
+- Calendar auto-seed at session start: when a Google Calendar meeting is happening now (or within 15 minutes), attendees are automatically populated as session participants with archetype lookup.
+- User archetype auto-detection: your own Superpower type is inferred from your speech patterns during sessions and persists across sessions via profile cache.
+- Post-session debrief: generates per-participant relationship summaries, pairing dynamics, and retro coaching bullets fed back into the ACE coaching store.
+- `classify_from_scores()` extracted as a public function in `profiler.py`, eliminating 3x duplication of quadrant classification logic.
+- Frontend coaching cards show per-person badges with counterpart name and archetype.
+- Echo filter prevents your own voice (picked up by ScreenCaptureKit on system audio) from creating false counterpart utterances. Uses word overlap against recent mic transcripts.
+- 50 tests covering the full signal chain, echo filter, archetype classification, debrief cap, retro bullets, and plain-English prompt verification.
+
+### Changed
+- Coaching prompts now use plain English instead of academic terminology. "They feel attacked" instead of "Central Route shut down." The underlying ELM detection logic is unchanged.
+- Post-session debriefs use the same plain language ("thinking it through", "going along", "defensive") instead of ELM framework terms.
+
+### Fixed
+- Race condition in observer signal snapshot: signals list is now copied before iteration to prevent modification during async processing.
+- ELM episode history accessed via public `get_episode_history()` instead of private `_episode_log`.
+- Bare `except Exception` blocks in calendar auto-seed now log errors via `logger.debug`.
+- Debrief functions cap participants at 10 (sorted by utterance count) to prevent prompt bloat.
+- Coaching engine user archetype accessed via property instead of private attribute.
+- Removed dead `_score_utterance` import from `main.py`.
+- Calendar auto-seed captures `now` before async API call to prevent clock drift.
+
 ## [0.10.0.0] - 2026-04-05
 
 ### Added

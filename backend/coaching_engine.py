@@ -657,7 +657,7 @@ class CoachingEngine:
         return CoachingPrompt(
             layer=prompt_layer,
             text=text,
-            is_fallback=False,
+            is_fallback=(text == bullet.content),
             triggered_by=triggered_by,
             speaker_id=speaker_id,
             bullet_ids_used=bullet.id,

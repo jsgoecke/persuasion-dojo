@@ -34,19 +34,23 @@ persuasion-dojo/
 │   ├── hybrid_transcription.py  # Hybrid transcriber (cloud + local failover)
 │   ├── profiler.py          # Participant Superpower profiler (rule-based, 5-utterance window)
 │   ├── elm_detector.py      # ELM state detection (ego-threatened / shortcut / consensus)
-│   ├── coaching_engine.py   # Claude Haiku prompt generation (3-layer: self/audience/group)
+│   ├── coaching_engine.py   # Claude Haiku prompt generation (select+personalize from bullet store)
+│   ├── coaching_bullets.py  # Bullet store lifecycle (ACE: Selector, Curator, Reflector)
+│   ├── seed_tips.py         # Seed 132 pre-written coaching tips into database
 │   ├── scoring.py           # Persuasion Score, Growth Score, FlexibilityScore, BKT, CAPS signatures
 │   ├── pre_seeding.py       # Pre-meeting participant classification from free text
 │   ├── linkedin.py          # LinkedIn public profile scraper (OG meta + JSON-LD)
 │   ├── sparring.py          # AI sparring partner mode (text loop, no audio)
 │   ├── retro_import.py      # Retroactive audio/text transcript processing (9 formats)
-│   ├── speaker_resolver.py  # LLM-based speaker name resolution (counterpart_N → real names)
+│   ├── speaker_resolver.py  # LLM-based speaker name resolution (fuzzy matching, cross-session memory)
 │   ├── calendar_service.py  # Google Calendar OAuth + meeting polling
 │   ├── team_sync.py         # JSON export/import for Team Intelligence
 │   ├── models.py            # User, Participant, Session, Prompt schemas + Welford M2 variance + SkillMastery
 │   └── database.py          # SQLite via SQLAlchemy (async, WAL mode)
 ├── swift/
 │   └── AudioCapture/        # ScreenCaptureKit binary (Xcode project)
+├── data/
+│   └── seed_tips.json       # Pre-written coaching tips (Superpower pairing × layer)
 ├── frontend/
 │   └── overlay/             # React floating always-on-top overlay
 ├── tests/
@@ -128,7 +132,8 @@ tests/
 ├── test_ace_convergence.py   # ACE loop convergence over simulated multi-session
 ├── test_linkedin.py          # LinkedIn scraper: URL validation, HTML extraction
 ├── test_retro_import.py      # Transcript parsing: 9 formats (VTT/SRT/Teams/Meet/Zoom/MD/JSON)
-├── test_speaker_resolver.py  # LLM-based speaker resolution, locking, WS notifications
+├── test_speaker_resolver.py  # LLM-based speaker resolution, locking, WS notifications (41 tests)
+├── test_coaching_quality.py  # Refusal detection, bullet selection, layer boost, user feedback (49 tests)
 ├── test_database.py          # Write, read, disk-full simulation
 ├── test_calendar_service.py  # Token refresh, participant matching
 ├── test_team_sync.py         # Export, import, malformed JSON validation
@@ -142,7 +147,7 @@ tests/
     └── pre_seeding.py        # Pre-seed classification from text/email/bio inputs
 ```
 
-Run `pytest` for the full backend suite (1298+ tests, ~65s).
+Run `pytest` for the full backend suite (1385+ tests, ~65s).
 
 ## Target user
 

@@ -94,6 +94,35 @@ Deferred work captured from /plan-ceo-review (2026-03-25, SCOPE EXPANSION mode) 
 
 ---
 
+## P1 — Speaker Identification Follow-ups
+
+### Deepgram multichannel=true investigation
+**What:** Investigate whether Deepgram `multichannel=true` with dual audio streams (mic + system) improves diarization accuracy vs current single mixed-audio stream. We already capture both streams separately via ScreenCaptureKit.
+**Priority:** P1
+**Context:** Deferred from Speaker ID Phase 1 /autoplan CEO review (2026-04-10). Outside Phase 1 blast radius (audio pipeline change).
+
+### Nova-3 validation on real SCK audio
+**What:** Validate Deepgram nova-3 diarization accuracy on real ScreenCaptureKit-captured audio before shipping to users. Nova-3 benchmarks are on clean recordings, not SCK mixed audio.
+**Priority:** P1
+**Context:** Deferred from Speaker ID Phase 1 /autoplan CEO review (2026-04-10). Critical to confirm the nova-2 → nova-3 upgrade doesn't regress.
+
+### Manual speaker tagging fallback UX
+**What:** Add a UI for users to manually correct speaker names when LLM resolution is wrong or slow. Currently the only correction path is the `confirm_speaker` WebSocket message.
+**Priority:** P2
+**Context:** Deferred from Speaker ID research doc Phase 2 (2026-04-09).
+
+### Adaptive resolver scheduling
+**What:** Dynamically adjust resolver interval based on meeting activity. Faster during introductions (first 2 min), slower once all speakers are locked.
+**Priority:** P2
+**Context:** Deferred from Speaker ID research doc Phase 3 (2026-04-09).
+
+### Speaker ID Phase 2 decision gate
+**What:** Evaluate Phase 1 results after 60 days. If resolver still < 85% accuracy, proceed to Phase 2 (WeSpeaker embeddings, voiceprint DB). If >= 85%, Phase 2 is optional.
+**Priority:** P2
+**Context:** Deferred from Speaker ID research doc (2026-04-09). Decision gate at 60 days post-Phase-1.
+
+---
+
 ## Deferred from CEO Plan (previously identified)
 
 - **Zoom SDK integration** — ScreenCaptureKit covers all platforms without it

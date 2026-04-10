@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0.0] - 2026-04-10
+
+### Added
+- Cache-rank-rotate coaching engine: pre-written coaching bullets are selected by relevance score and personalized by Haiku in real time, replacing from-scratch generation. Eliminates refusals and reduces latency.
+- User feedback loop: thumbs-up/down on coaching prompts adjusts bullet scores (2x weight vs auto-scoring). Harmful bullets auto-retire.
+- Coaching bullet store with ACE lifecycle: Selector picks best bullet per moment, Curator merges session learnings, Reflector extracts patterns via Opus post-session.
+- Layer diversity boost: if recent prompts were all self-layer, audience and group layers get priority to prevent coaching tunnel vision.
+- Diversity-preserving cap enforcement: when bullet store exceeds 250, retires lowest-scoring bullets while protecting at least 5 per meeting context type and counterpart archetype.
+- 132 seed coaching tips across all 3 layers (self/audience/group) and 4 archetypes, warm-started at helpful_count=1.
+- Speaker resolver Phase 1: 10 targeted fixes for faster, more accurate speaker identification during live sessions.
+- Speaker resolution interval dropped from 60s to 15s so names appear before introductions scroll away.
+- Context window preserves first 20 utterances (introductions) plus last 80 in long meetings.
+- Fuzzy name matching (SequenceMatcher, 0.85 threshold) so "Sarah Chen" from Claude matches "Sarah L Chen" on the calendar.
+- Cross-session speaker memory: pre-seeds known names from Participant DB (last 90 days) so returning attendees are recognized instantly.
+- Confidence decay with flip-flop guard: same-name confidence can drift down, but a different name must strictly beat existing confidence to prevent Alice/Bob oscillation.
+- Speaker mappings persist each resolution cycle via callback (crash-safe, no longer lost on session crash).
+- Deepgram model upgraded from nova-2 to nova-3 for improved diarization accuracy.
+- Utterance dedup in session pipeline: exact duplicate text from same speaker is suppressed.
+- Playbook filter strips scoring metrics and markdown tables before sending to Haiku.
+- Frontend prompt feedback UI with thumbs-up/down buttons and WebSocket feedback_ack protocol.
+
+### Changed
+- Coaching system prompt redesigned for personalization flow: Haiku adapts pre-written tips rather than generating from scratch.
+- Bullet store cap raised from 100 to 250 active bullets for long-term users.
+- Speaker resolver skips API calls when no new utterances arrive (saves ~50% of Haiku calls during quiet periods).
+
+### Fixed
+- `is_fallback` flag now correctly set when Haiku times out and verbatim bullet is shown, restoring the fallback badge in the overlay.
+- `datetime.utcnow()` replaced with `datetime.now(timezone.utc)` in speaker persistence callback (deprecated in Python 3.12+).
+- `None` values in known_names list no longer cause fuzzy matching errors (filtered at init).
+
 ## [0.10.2.0] - 2026-04-09
 
 ### Added

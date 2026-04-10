@@ -1,458 +1,389 @@
-# Speaker Identification Research: Mapping Diarized Speakers to Real Names
+# Speaker Identification Research: World-Class Diarization for Bot-Free Meeting Apps
 
-**Date:** 2026-03-30
-**Purpose:** Landscape analysis of how meeting intelligence products solve the speaker_0 → "Sarah Chen" problem.
+**Date:** 2026-04-09 (v2, complete rewrite)
+**Version:** 0.10.2.0
+**Status:** Research complete, ready for implementation planning
 
 ---
 
 ## Executive Summary
 
-There are **7 distinct approaches** to mapping anonymous diarized speakers to real names, ranging from trivial (platform metadata) to cutting-edge (multimodal LLMs). The right choice depends on your audio capture architecture. Persuasion Dojo's ScreenCaptureKit approach (mixed audio, no meeting bot) is the hardest case — you get a single mixed audio stream with no platform metadata. This constrains you to approaches 3-7 below.
+Persuasion Dojo's speaker identification is poor not because of architectural flaws, but because of fixable implementation gaps. The dual-stream capture (mic + system audio) is correct and matches industry best practice. The problems are: Deepgram mono diarization is unreliable for multi-speaker system audio, the SpeakerResolver runs too slowly with too little context, and there's no audio-based voiceprint matching.
+
+Granola, the benchmark, does NOT solve multi-speaker identification. They label speakers as "Me" vs "Them" only. We are already ahead of Granola architecturally. The path to world-class: fix the resolver (Phase 1), add voiceprint embeddings (Phase 2), optionally run local streaming diarization (Phase 3).
 
 ---
 
-## Approach 1: Platform Metadata (Meeting Bot)
+## Part 1: Granola App Analysis
 
-**Used by:** Recall.ai, Nylas Notetaker, MeetStream.ai, Otter.ai (when bot-joined)
+### Architecture (analyzed from /Applications/Granola.app v7.99.1)
 
-### How it works
-A meeting bot joins the call as a participant, gaining access to the meeting platform's participant list, including names and email addresses. Many platforms (Zoom RTMS, Teams) provide **separate audio streams per participant** — each stream is tagged with the participant's identity. Recall.ai calls this "Perfect Diarization": transcribe each isolated stream independently, then label with the known participant name. No acoustic diarization needed at all.
+- **Platform:** Electron 41.0.2 (Chromium 146)
+- **Bundle ID:** com.granola.app
+- **Native binary:** `granola.node` (1.5MB universal, N-API) implements `CombinedAudioCapture`
+- **Auth:** Supabase + WorkOS
+- **Backend API:** api.granola.ai (subdomains: cinnamon, stream, berry, pecan)
+- **Local storage:** SQLite via WASM + JSON cache (`cache-v6.json`)
 
-### Technical details
-- Zoom's Real-Time Media Streams (RTMS) is a WebSocket-based API providing real-time audio, video, transcripts, and participant metadata
-- Recall.ai processes each participant's audio stream independently: mono 16-bit signed little-endian PCM at 16kHz
-- When multiple people share a mic (e.g., conference room), standard diarization is used within that stream only
+### Dual-Stream Audio Capture
 
-### Pros
-- **100% accurate** speaker attribution when separate streams are available
-- Works even with overlapping speech (streams are independent)
-- Names come from the platform — no voice enrollment needed
-- Real-time capable
+Granola captures two audio streams simultaneously via native binary:
 
-### Cons
-- **Requires a meeting bot** visible to all participants (social friction, compliance concerns)
-- Platform-dependent — each platform (Zoom, Teams, Meet, Webex) has different APIs
-- Some orgs block third-party bots via admin policies
-- Engineering cost: must maintain bot infrastructure across platforms
+1. **Microphone stream** — CoreAudio `AudioUnit` (direct input device, `kAudioOutputUnitProperty_CurrentDevice`)
+2. **System audio stream** — ScreenCaptureKit (`SCStream`, `SCShareableContent`) with CoreAudio fallback
 
-### Latency
-- Real-time (~100ms per stream chunk)
+Key evidence from binary strings:
+- `audio-capture-use-screencapturekit` and `audio-capture-use-coreaudio` — two capture paths
+- `Recording microphone and system audio`
+- Separate `microphoneBuffer` and `systemAudioBuffer`
+- `CAPTURE_METHODS = ["browser", "mac-core-audio", "win-v2-native"]`
 
-### Privacy implications
-- Bot is visible to all participants — transparent but intrusive
-- Audio data typically processed on vendor's cloud infrastructure
-- Participant metadata (names, emails) flows through the bot platform
+### Speaker Identification — The Truth
 
-### Enrollment required
-- None. Names come from the meeting platform.
+**Granola explicitly disables diarization.** Both Deepgram and AssemblyAI connections set `diarize: false`.
 
-### Relevance to Persuasion Dojo
-- **Not directly applicable** — Persuasion Dojo uses ScreenCaptureKit (no bot). However, this is the gold standard for accuracy. Could be offered as an alternative capture mode for users who don't mind a bot.
+Speaker identification is trivially solved by the dual-stream architecture:
+- `source === "microphone"` → "Me" (green bubbles)
+- `source === "system"` → "Them" (grey bubbles)
 
----
+Frontend rendering code confirms:
+```javascript
+const p = h => h.source === "microphone"
+  ? (i && h.contributor?.userName ? h.contributor.userName : "Me")
+  : h.source === "system" ? "Them" : h.source;
+```
 
-## Approach 2: Calendar Pre-Seeding + First-Speaker Heuristics
+For collaborative meetings (multiple Granola users), a `contributor` object with `userName` enables per-user attribution among Granola users only.
 
-**Used by:** Granola (partially), Meetily, most bot-free notetakers
+**Granola cannot distinguish between multiple remote participants.** CEO Chris Pedregal publicly acknowledged: "Real time diarization is really tough, but we're working on it."
 
-### How it works
-Pull the attendee list from a calendar invite (Google Calendar, Outlook) before the meeting starts. You now know *who* should be on the call (names + emails), but not *which diarized speaker* maps to which attendee. The simplest heuristic: Speaker 0 = first person to talk. More sophisticated: use speaking order, mic vs. system audio split, or ask the user to confirm after the first few utterances.
+### Transcription Providers (Failover Architecture)
 
-### Technical details
-- Granola integrates with Google Calendar and labels speakers as "Me" (microphone input) and "Them" (system audio) on desktop
-- The "Me" vs. "Them" split gives you a guaranteed 2-way attribution if there are exactly 2 participants
-- For multi-party calls, Granola falls back to "Speaker A", "Speaker B" — no named identification
-- Post-meeting, the AI summary engine (GPT-4o) can sometimes infer names from transcript content
+| Provider | Endpoint | Model | Notes |
+|----------|----------|-------|-------|
+| **Deepgram** (primary) | `wss://api.deepgram.com/v1/listen` | nova-3 (feature-flagged), nova-2 fallback | `diarize:false`, `smart_format:true`, `interim_results:true` |
+| **AssemblyAI** (secondary) | `wss://streaming.assemblyai.com/v3/ws` | Universal v2 | API version 2025-05-12, `format_turns:true` |
+| **Speechmatics** (tertiary) | `wss://eu2.rt.speechmatics.com/v2` | Standard + Enhanced variants | |
 
-### Pros
-- No enrollment needed — calendar data provides the roster
-- Works with any audio capture method (including ScreenCaptureKit)
-- "Me" vs. "Them" split is trivially accurate for 2-person calls
-- Zero latency for the roster itself; real-time for the Me/Them split
+Token management via backend endpoints: `get-deepgram-token`, `get-transcription-auth-token`.
 
-### Cons
-- Calendar attendees != actual participants (people join late, skip, or call in from unexpected numbers)
-- No way to map Speaker A/B/C to specific attendees in multi-party calls without additional signals
-- First-speaker heuristic is fragile — the host doesn't always speak first
-- "Me" vs. "Them" only works for 2-person calls
+### Other Notable Granola Features
 
-### Latency
-- Roster available pre-meeting. Speaker mapping: depends on heuristic (first-speaker is immediate; user confirmation adds seconds to minutes).
+| Module | Purpose |
+|--------|---------|
+| `ambient_context.node` | Window title monitoring via accessibility APIs → sent to `process-ambient-context` API |
+| `chatpaste.node` | Pastes consent messages into Zoom/Teams/Meet chat via accessibility APIs |
+| `eventkit.node` | macOS Calendar (EventKit) integration |
+| `macos_mic_apps_with_devices.node` | Detects which apps use the microphone |
+| `GranolaTalk` | Dictation feature using Deepgram nova-3 + Groq (Llama 3.3 70B) for formatting |
 
-### Privacy implications
-- Minimal — calendar data already accessible to the user
-- No voice data leaves device in Granola's architecture
+### No Patents Found
 
-### Enrollment required
-- None. Calendar integration only.
-
-### Relevance to Persuasion Dojo
-- **Highly applicable.** Persuasion Dojo already has `calendar_service.py` and `pre_seeding.py`. The calendar roster gives you the *who* — you just need to solve the mapping. The mic/system audio split gives you "user" vs. "everyone else" for free. This is your baseline.
+Searches across Google Patents, USPTO, and general web for patents by Granola Inc or Chris Pedregal related to transcription or speaker identification returned zero results.
 
 ---
 
-## Approach 3: Voice Fingerprint Enrollment (Voiceprint)
+## Part 2: Current Persuasion Dojo Architecture
 
-**Used by:** Otter.ai, Jamie AI, Amazon Connect Voice ID, Picovoice Eagle
+### What Works Well
 
-### How it works
-During an explicit enrollment phase, the user records a short voice sample. The system extracts a voice embedding (a mathematical fingerprint of the voice's unique characteristics — pitch, timbre, cadence, formant structure). This embedding is stored as a "voiceprint." During meetings, the system compares incoming audio segments against all enrolled voiceprints to identify who is speaking.
+The dual-stream capture is correctly implemented:
 
-### Technical details
+| Component | Status | Details |
+|-----------|--------|---------|
+| Swift AudioCapture binary | Working | ScreenCaptureKit (system) + AVAudioEngine (mic) |
+| Dual named pipes | Working | `/tmp/persuasion_audio.pipe` (system) + `/tmp/persuasion_mic.pipe` (mic) |
+| Separate Deepgram connections | Working | System: `diarize=true`, Mic: `diarize=false` |
+| Echo suppression | Working | Text similarity filter (0.6 threshold) between mic and system utterances |
+| Speaker routing | Working | Mic → "user", System → "counterpart_0", "counterpart_1", etc. |
 
-**Otter.ai:**
-- Users teach Otter their voice by reading a short script
-- System learns from tagged paragraphs — tagging a speaker in one transcript improves future identification
-- Voice embeddings are stored server-side
-- 89-95% accuracy, improving over time as more samples accumulate
-- Workspace-wide: shared speakers across an organization
+### What's Broken (10 Specific Issues)
 
-**Jamie AI:**
-- First meeting: speakers labeled "Speaker 1", "Speaker 2" with audio clips for manual labeling
-- After labeling, Jamie remembers the voice for all future meetings
-- Audio is deleted after summary generation — voiceprint persists
-- EU-hosted servers, audio processed then deleted
+#### CRITICAL #1: SpeakerResolver Runs Every 60 Seconds
+- **Location:** `backend/speaker_resolver.py:83`
+- **Impact:** Users see "counterpart_0" for a full minute minimum. Introductions ("Hi, I'm Sarah") happen in the first 30 seconds and may not be caught until the second cycle.
+- **Fix:** Drop to 15s (match coaching cadence floor).
 
-**Picovoice Eagle:**
-- Fully on-device — no voice data leaves the user's machine
-- Enrollment from "a few seconds" of natural speech — no specific phrases required
-- Produces an Eagle Profile object (voiceprint) stored locally
-- Real-time streaming recognition: compares incoming audio frames against enrolled profiles
-- Cross-platform (macOS, iOS, Android, web), language-agnostic, text-independent
-- GDPR & HIPAA compliant by design
-- 96%+ accuracy with 3 seconds of speech
+#### CRITICAL #2: Only Last 100 Utterances in Context
+- **Location:** `backend/speaker_resolver.py:165`
+- **Impact:** In a 30+ minute meeting, the identifying moments (introductions, first-time addressing) have scrolled out of the window.
+- **Fix:** Always include first 20 utterances + last 80.
 
-**Amazon Connect Voice ID (retiring May 2026):**
-- 30 seconds of net speech for enrollment
-- 10 seconds for verification
-- Authentication score 0-100 (default threshold: 90)
-- Text-independent — no passphrases needed
-- Designed for call center authentication, not meeting transcription
+#### MAJOR #3: Exact String Match on Known Names
+- **Location:** `backend/speaker_resolver.py:212`
+- **Impact:** Claude returns "Sarah Chen" but calendar says "Sarah Lynn Chen" → rejected. `identity.py` has fuzzy matching (0.85 threshold) that the resolver never uses.
+- **Fix:** Use `SequenceMatcher` from `identity.py` instead of `in` operator.
 
-### Pros
-- High accuracy (89-96%+) once enrolled
-- Works with mixed audio streams — no separate streams needed
-- On-device options available (Picovoice Eagle) — excellent privacy
-- Improves over time with more samples
-- Language and accent agnostic
-- Can identify speakers from the first utterance (no warm-up needed)
+#### MAJOR #4: Confidence Can Never Decrease
+- **Location:** `backend/speaker_resolver.py:226`
+- **Impact:** Wrong mapping at 0.72 confidence can never be corrected. Wrong mapping at 0.82 is permanently locked.
+- **Fix:** Allow confidence to decrease with a decay factor. Use `max(new_confidence, existing * 0.9)` logic.
 
-### Cons
-- **Cold start problem:** requires enrollment before first use — every participant must have been seen before
-- External participants (clients, prospects) won't be enrolled unless you capture their voice in a prior meeting
-- Voice characteristics can change (illness, aging, emotional state)
-- Voiceprint storage is biometric data — significant regulatory implications (GDPR Article 9, BIPA in Illinois)
-- Accuracy degrades with low-quality audio, background noise, or very short utterances
+#### MAJOR #5: No Cross-Session Speaker Memory
+- **Location:** `backend/speaker_resolver.py` (entire file)
+- **Impact:** Each session starts from scratch. If you talked to Sarah Chen last week, the resolver doesn't know.
+- **Fix:** Query Participant DB at session start. Pre-seed known_names from past sessions.
 
-### Latency
-- Picovoice Eagle: real-time (~10ms per frame)
-- Otter.ai: near-real-time (within the transcription pipeline)
-- Jamie: post-meeting (processes after recording stops, ~1-2 minutes)
+#### MAJOR #6: Hybrid Failover Loses Diarization
+- **Location:** `backend/hybrid_transcription.py:191-227`
+- **Impact:** Ring buffer stores raw audio bytes only. When replayed through Moonshine after Deepgram failure, all speaker IDs become speaker_0.
+- **Fix:** Accept diarization loss during failover (document as known limitation) or store diarization metadata alongside audio in ring buffer.
 
-### Privacy implications
-- **Critical concern.** Voice embeddings are biometric data — as unique as fingerprints. Under GDPR, biometric data for identification is "special category" data requiring explicit consent and strict safeguards.
-- On-device processing (Picovoice) mitigates cloud storage concerns but the voiceprint itself is still biometric
-- Otter.ai stores voiceprints server-side — disclosed in privacy policy
-- Jamie deletes audio but retains voiceprint — a meaningful privacy distinction
+#### MEDIUM #7: Late Database Persistence
+- **Location:** `backend/main.py:1933-1951`
+- **Impact:** Resolved names written to DB only at session end. If session crashes, all name mappings are lost.
+- **Fix:** Persist name mappings on each resolution cycle.
 
-### Enrollment required
-- **Yes.** This is the fundamental limitation. Ranges from 3 seconds (Picovoice) to 30 seconds (Amazon) of speech.
+#### MEDIUM #8: No Speaker Assignment Conflict Detection
+- **Impact:** Deepgram sometimes swaps speaker IDs mid-conversation. No consistency checking catches this.
+- **Fix:** Track embedding centroids per speaker; flag when a speaker's embedding suddenly changes.
 
-### Relevance to Persuasion Dojo
-- **Very applicable for the user's own voice** — you can enroll the Persuasion Dojo user during onboarding (read a sentence or two). This gives you reliable "that's the user speaking" detection, which is critical for coaching prompts ("you've been talking for 4 minutes — ask a question").
-- **Less applicable for other participants** — in high-stakes exec meetings, you can't ask the CEO you're pitching to enroll their voice beforehand. However, over time, repeat participants (team members, recurring stakeholders) can be passively enrolled.
-- Picovoice Eagle is the strongest candidate: on-device, fast enrollment, real-time, privacy-compliant.
+#### MEDIUM #9: Empty Roster Handling
+- **Location:** `backend/main.py:1420`
+- **Impact:** Sessions without Google Calendar have no known_names list. Claude must rely solely on self-identification.
+- **Fix:** Cross-session participant DB provides a "likely attendees" list even without calendar.
+
+#### MINOR #10: Using Deepgram nova-2, Not nova-3
+- **Impact:** nova-3 has improved diarization. Granola defaults to nova-3.
+- **Fix:** Upgrade model parameter from `nova-2` to `nova-3`.
 
 ---
 
-## Approach 4: LLM-Based Contextual Inference
+## Part 3: How Competitors Solve Speaker ID
 
-**Used by:** AssemblyAI (Speech Understanding API), research prototypes, Granola's post-meeting AI
+### Otter.ai
+- Uses a **meeting bot** that joins the call (access to participant roster)
+- Builds **voiceprints** from user-recorded scripts
+- Post-recording ML matches voiceprints to speaker segments
+- Users can manually tag paragraphs to train the system
+- Source: [Otter.ai Speaker Identification Overview](https://help.otter.ai/hc/en-us/articles/21665587209367)
 
-### How it works
-After (or during) transcription, pass the diarized transcript to an LLM along with contextual signals to infer who is speaking. The LLM looks for self-identification ("Hi, I'm Sarah from marketing"), role indicators ("As CEO, I think..."), how speakers address each other ("Great point, Mike"), topic expertise patterns, and conversational dynamics (who asks questions vs. who answers).
+### Fireflies.ai
+- Uses a **meeting bot** for audio capture
+- 4-stage AI process: audio preprocessing → feature extraction → speaker clustering → refinement
+- Deep neural networks with multi-layer speaker embedding models
+- Claims 95%+ accuracy up to 50 speakers (degrades above 6 with overlapping speech)
 
-### Technical details
+### Recall.ai (Infrastructure Provider)
+- Three diarization methods:
+  1. **Speaker Timeline** — uses meeting platform active speaker events
+  2. **Perfect Diarization** — separate audio streams per participant (bot-only, 100% accurate)
+  3. **Machine Diarization** — AI-based voice recognition
+- Their Desktop Recording SDK (Granola-like) does NOT support perfect diarization
+- Confirms: bot-free apps cannot get per-participant audio streams
 
-**AssemblyAI Speech Understanding API:**
-- Two-step process: first diarize to speaker clusters, then use LLM to map clusters to names
-- `known_values` parameter: pass expected names/roles, model assigns them to clusters
-- `speaker_type` can be "name" (specific people) or "role" (Agent, Customer)
-- Extra names in `known_values` are silently ignored — handles uncertainty gracefully
-- `speakers` parameter allows additional metadata per speaker for better inference
-- Output replaces generic labels ("A", "B") with identified names in utterances and words
+### Caret
+- Claims "only product offering real-time speaker diarization" in bot-free category
+- Uses "audio sampling and LLM" for speaker identification
+- Native C++ engine with AGC, VAD, active noise cancellation
+- Source: [Show HN: Caret](https://news.ycombinator.com/item?id=44522847)
 
-**LLM Zero-Shot Inference (research findings):**
-- Recent research (2025) shows text-only LLMs (Qwen2.5-7B, ChatGPT-4.5) perform **poorly** at zero-shot speaker identification correction
-- Primary failure mode: **hallucination** — LLMs alter utterance content while trying to fix speaker labels
-- Fine-tuned LLMs (PaLM 2-S) perform better but require training data
-- Best results: combine LLM predictions with acoustic information (beam search decoding)
-
-**Practical signals an LLM can use:**
-- Self-identification: "This is David from legal"
-- Direct address: "Sarah, what do you think?"
-- Role indicators: "From a finance perspective..." (maps to CFO)
-- Topic continuity: same speaker tends to own a topic thread
-- Meeting structure: first speaker is often the organizer
-- Question patterns: facilitators ask more questions
-
-### Pros
-- Works without any enrollment — fully cold-start capable
-- Can leverage calendar roster as `known_values` to constrain the problem
-- Handles participants never seen before
-- Can identify speakers even mid-meeting
-- Graceful degradation — partial identification is still useful
-
-### Cons
-- **Unreliable in practice** — significant hallucination risk, especially zero-shot
-- Accuracy drops when speakers don't self-identify or address each other by name
-- Many business meetings are contextually ambiguous ("I agree" — could be anyone)
-- Latency cost of LLM inference (100ms-2s depending on model)
-- Requires transcript context to accumulate before inference is useful (first few minutes are blind)
-
-### Latency
-- Real-time capable with streaming LLMs, but accuracy improves with more context
-- AssemblyAI: post-recording API call
-- Practical: best used as a 30-60 second delayed refinement that improves over the meeting duration
-
-### Privacy implications
-- Transcript text sent to LLM API (cloud) — same privacy posture as existing coaching engine
-- No biometric data involved
-- Speaker names inferred from conversation content — participants may not know they're being identified
-
-### Enrollment required
-- **No.** This is the key advantage. Works completely cold.
-
-### Relevance to Persuasion Dojo
-- **Highly applicable as a secondary signal.** You already send transcripts to Claude for coaching prompts. Adding a "who is this speaker?" inference step is low marginal cost. Combine with calendar roster (`known_values` equivalent) for constrained inference. Key risk: hallucination must be managed — confidence thresholds are essential.
+### Microsoft Teams
+- Built-in voiceprint enrollment ("intelligent speakers")
+- Users record a voice sample → stored securely
+- Real-time matching during meetings
+- Only works within Teams ecosystem
 
 ---
 
-## Approach 5: Microphone vs. System Audio Split
+## Part 4: Academic Research & Open Source Tools
 
-**Used by:** Granola, Jamie, Bluedot, most bot-free local-capture tools
+### ECAPA-TDNN (Speaker Embedding Model)
+- **Architecture:** Emphasized Channel Attention, Propagation and Aggregation in TDNN
+- **Output:** Fixed-dimensional speaker embedding vector from variable-length audio
+- **Latency:** ~70ms inference per segment on CPU
+- **Accuracy:** EER 0.87% on VoxCeleb1 (C=1024 variant)
+- **Enrollment:** Produces embeddings comparable via cosine similarity
+- **Available via:** SpeechBrain (`speechbrain/spkrec-ecapa-voxceleb`), WeSpeaker
+- **Relevance:** This is how you build voiceprint enrollment. Extract embeddings, store them, compare live audio against stored profiles.
 
-### How it works
-On macOS/Windows, capture two separate audio streams: (1) the microphone input (the user's own voice) and (2) the system audio output (everyone else on the call). This gives you a guaranteed binary split: "me" vs. "not me." For the user's own voice, attribution is trivially correct. For everyone else, you still need diarization within the system audio stream.
+### WeSpeaker (Production Speaker Embeddings)
+- **Architecture:** ECAPA-TDNN, ResNet, and others with first-class ONNX export
+- **Runtime:** `wespeakerruntime` — lightweight C++/Python for deployment
+- **Accuracy:** Competitive with SpeechBrain on VoxCeleb benchmarks
+- **License:** Apache 2.0
+- **GitHub:** [wenet-e2e/wespeaker](https://github.com/wenet-e2e/wespeaker)
+- **Relevance:** HIGH. ONNX runtime is ideal for low-overhead embedding extraction on Mac. Better deployment story than PyTorch-based alternatives.
 
-### Technical details
-- macOS: ScreenCaptureKit can capture application audio (system audio) separately from the microphone
-- The user's microphone input is available via AVAudioEngine or Core Audio
-- Two parallel streams → two parallel transcriptions → merge with timestamp alignment
-- Diarization is only needed on the system audio stream (the "not me" speakers)
-- Overlap between mic and system audio (echo) requires echo cancellation or the mic input is ignored when system audio is active
+### diart (Streaming Speaker Diarization)
+- **Architecture:** pyannote segmentation model + embedding model + incremental online clustering
+- **Latency:** 500ms per update step, 1-2s end-to-end
+- **Accuracy:** Competitive with offline systems on AMI, DIHARD benchmarks
+- **Enrollment:** No (unsupervised clustering). Can post-match to known voiceprints.
+- **License:** MIT
+- **GitHub:** [juanmc2005/diart](https://github.com/juanmc2005/diart)
+- **Relevance:** HIGH. Processes exactly your use case: single mono audio stream. 500ms update cadence fits <2s target.
 
-### Pros
-- **Trivially identifies the user** — the most important speaker for coaching
-- No enrollment needed for the user
-- Reduces the diarization problem from N speakers to N-1
-- Works with any meeting platform
-- Real-time capable
-- No privacy concerns beyond existing audio capture
+### NVIDIA Streaming Sortformer
+- **Architecture:** Fast-Conformer encoder + 18-layer Transformer with Arrival-Order Speaker Cache (AOSC)
+- **Latency:** Frame-level, minimal latency
+- **Accuracy:** Lower DER than other streaming systems
+- **Enrollment:** No (zero-shot via AOSC)
+- **License:** Open source via NeMo
+- **HuggingFace:** [nvidia/diar_streaming_sortformer_4spk-v2.1](https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1)
+- **Relevance:** MEDIUM-HIGH. Best accuracy but requires NVIDIA GPU. Not suitable for on-device Mac.
 
-### Cons
-- Only solves "me" vs. "everyone else" — doesn't identify other participants
-- Still need diarization + identification for the remaining speakers
-- Echo cancellation adds complexity
-- If the user uses a conference room speaker, the mic captures everyone (split breaks down)
-- Some meeting apps route both directions through system audio (platform-dependent)
+### pyannote Speaker Diarization 3.1
+- **Architecture:** Segmentation (powerset model) → embedding extraction → agglomerative clustering
+- **Latency:** Offline (real-time factor ~2.5% on V100 GPU)
+- **Accuracy:** State-of-the-art offline DER
+- **License:** MIT (gated HuggingFace access)
+- **Relevance:** MEDIUM. Not streaming-native. Its models power diart's streaming pipeline. Good for retroactive transcript processing.
 
-### Latency
-- Real-time (< 50ms for stream splitting)
+### FluidAudio (CoreML on Apple Silicon)
+- **Architecture:** pyannote Community-1 pipeline compiled to CoreML
+- **Runtime:** Apple Neural Engine (ANE), not CPU or GPU
+- **Latency:** Near real-time on ANE, 10-second window for streaming
+- **Accuracy:** 23.2% DER on AMI English 16 meetings (single-channel)
+- **License:** Apache 2.0
+- **GitHub:** [FluidInference/FluidAudio](https://github.com/FluidInference/FluidAudio)
+- **Relevance:** HIGH. Native Swift SDK, runs on same Mac as ScreenCaptureKit binary. ANE offloading means zero CPU cost. Could integrate directly into Swift AudioCapture binary.
 
-### Privacy implications
-- Identical to current ScreenCaptureKit capture — no additional data collection
+### Picovoice Falcon
+- **Architecture:** Proprietary on-device diarization engine optimized for CPU
+- **Latency:** Not streaming (processes complete files). 25x real-time on single CPU core.
+- **Accuracy:** Claims 5x better than Google STT diarization. 0.1 GiB memory vs pyannote's 1.5 GiB.
+- **License:** Proprietary (free tier available)
+- **Relevance:** MEDIUM. Great efficiency. Not streaming-native. Proprietary license is a consideration.
 
-### Enrollment required
-- **No.**
+### Resemblyzer
+- **Architecture:** GE2E speaker encoder from Google's paper. 256-dim embeddings.
+- **Latency:** ~1000x real-time on GPU, CPU-friendly
+- **Accuracy:** Older architecture, less accurate than ECAPA-TDNN
+- **License:** Apache 2.0
+- **GitHub:** [resemble-ai/Resemblyzer](https://github.com/resemble-ai/Resemblyzer)
+- **Relevance:** LOW. Outdated. WeSpeaker is strictly better.
 
-### Relevance to Persuasion Dojo
-- **Immediately applicable and should be implemented.** This is the highest-value, lowest-cost improvement. Persuasion Dojo already uses ScreenCaptureKit for system audio — adding a parallel microphone stream gives you "user is speaking" vs. "someone else is speaking" with zero false positives. This directly enables the most important coaching prompts: "You've been talking for 4 minutes" and "You're mid-utterance — suppressing prompt."
-
----
-
-## Approach 6: End-to-End Neural Models (SpeakerLM)
-
-**Used by:** Research only (as of March 2026)
-
-### How it works
-A single multimodal LLM processes raw audio and jointly performs speech recognition, speaker diarization, and speaker identification in one pass. The model learns to predict "who spoke when and what" without a traditional pipeline of separate ASR → diarization → identification steps.
-
-### Technical details (SpeakerLM, August 2025)
-- Architecture: SenseVoice-large audio encoder → Transformer projector → Qwen2.5-7B-Instruct language model
-- Audio encoder extracts acoustic features; projector aligns audio embeddings with text embedding space
-- Flexible speaker registration: can optionally accept enrolled voiceprints or work zero-shot
-- Outperforms cascaded baselines on public benchmarks
-- Eliminates error propagation between pipeline stages
-- Handles overlapping speech natively
-
-### Pros
-- State-of-the-art accuracy on benchmarks
-- Single model eliminates pipeline complexity
-- Handles overlapping speech better than cascaded approaches
-- Can work with or without prior speaker enrollment
-
-### Cons
-- **Not production-ready** — research paper published August 2025
-- Requires significant compute (7B parameter model)
-- Not available as an API or SDK
-- Real-time streaming not demonstrated
-- Training requires large-scale annotated data
-
-### Latency
-- Unknown for real-time use — likely too slow for streaming with 7B parameters
-- Better suited for near-real-time or post-meeting processing
-
-### Privacy implications
-- Could theoretically run on-device with sufficient hardware
-- Currently research-only — no production privacy considerations yet
-
-### Enrollment required
-- **Optional** — supports both enrolled and zero-shot modes
-
-### Relevance to Persuasion Dojo
-- **Future consideration only.** Monitor this space — within 12-18 months, production-ready end-to-end models may emerge. Not actionable for current MVP.
+### Key Research Papers
+- **Meeting Transcription Using Virtual Microphone Arrays** (Microsoft, 2019) — 3 async microphones yielded 11.1% WER improvement and 14.8% speaker-attributed WER improvement
+- **Advances in Online Audio-Visual Meeting Transcription** (2019) — "Separate, Recognize, Diarize" (SRD) framework for overlapping speech (>10% of meeting time)
+- **Deepgram Multichannel vs Diarization** — Deepgram explicitly recommends sending two-channel audio with `multichannel=true` for "effectively perfect diarization" on Me/Them split
 
 ---
 
-## Approach 7: On-Device Speaker Diarization (Picovoice Falcon, FluidAudio)
+## Part 5: Recommended Architecture
 
-**Used by:** Meetily (open-source), Picovoice Falcon, FluidAudio (Core ML)
+### Phase 1: Fix the SpeakerResolver (Low-Effort, High-Impact)
 
-### How it works
-Run speaker diarization locally on the user's device using optimized models. This separates voices in a mixed audio stream and assigns speaker labels (speaker_0, speaker_1) — but does not identify who each speaker is. The identification step still requires one of the other approaches above.
+Changes to `backend/speaker_resolver.py`:
 
-### Technical details
+1. **Drop interval from 60s to 15s** — match coaching cadence floor
+2. **Always include first 20 utterances** in context window — `first_20 + last_80` instead of `last_100`
+3. **Add fuzzy name matching** — use `SequenceMatcher` (already in `identity.py`) with 0.85 threshold
+4. **Query Participant DB at session start** — pre-seed `known_names` from past sessions with this user
+5. **Allow confidence decay** — `if confidence < existing * 0.9: continue` instead of `if confidence < existing: continue`
+6. **Persist mappings each cycle** — write to DB on each resolution, not just session end
+7. **Upgrade to Deepgram nova-3** — better diarization model (Granola's default)
 
-**Picovoice Falcon:**
-- On-device speaker diarization — no cloud required
-- Runs on macOS, iOS, Android, web
-- Can be combined with Eagle (speaker recognition) for full identification
-- Outputs speaker segments with timestamps
+**Estimated impact:** Name resolution latency drops from 60s to 15s. Cross-session recognition works. Wrong mappings become correctable.
 
-**FluidAudio:**
-- Core ML models for macOS/iOS
-- Open-source, optimized for Apple silicon
-- Provides speaker diarization, ASR, and voice activity detection
-- Designed to integrate with ScreenCaptureKit
+### Phase 2: Speaker Embeddings via WeSpeaker (The Differentiator)
 
-### Pros
-- Fully offline — maximum privacy
-- No API costs
-- Low latency (on-device processing)
-- Works with any audio source
+Add audio-based voiceprints alongside text-based LLM resolver:
 
-### Cons
-- Diarization only — doesn't tell you *who* each speaker is
-- Still need a separate identification approach
-- Accuracy may be lower than cloud-based alternatives
-- Requires device compute resources
+1. **Extract ECAPA-TDNN embeddings** from each diarized speech segment using WeSpeaker ONNX runtime
+2. **Cluster embeddings per session** to build per-speaker centroids
+3. **Compare centroids against stored Participant voiceprints** (cosine similarity, threshold ~0.7)
+4. **Calendar-seeded matching** — narrow candidate set to expected attendees
+5. **Store/update voiceprint centroids** in Participant records after each session
+6. **Progressive refinement** — update stored embeddings with exponential moving average each meeting
 
-### Latency
-- Real-time capable on modern hardware
+**Performance budget:** WeSpeaker ONNX processes a 3-second segment in ~70ms on CPU. Processing 6 segments every 10 seconds = 420ms. Well within budget.
 
-### Privacy implications
-- Excellent — all processing stays on device
+**New dependency:** `wespeakerruntime` (Apache 2.0, ONNX-based, no GPU required)
 
-### Enrollment required
-- **No** for diarization. Yes for identification (if combined with Eagle).
+### Phase 3: Local Streaming Diarization (Optional, If Deepgram Unreliable)
 
-### Relevance to Persuasion Dojo
-- **Applicable as a Deepgram supplement or replacement.** If Deepgram diarization accuracy on ScreenCaptureKit-captured mixed audio is insufficient (the hard gate in CLAUDE.md), on-device alternatives like Falcon or FluidAudio could be fallbacks. FluidAudio's Core ML integration is particularly interesting for a macOS-first product.
+If Deepgram nova-3 mono diarization is still unreliable:
 
----
+1. **Run diart locally** as parallel diarization on system audio stream
+2. **Use pyannote segmentation + WeSpeaker embeddings** (already loaded from Phase 2)
+3. **Merge diart speaker labels** with Deepgram transcription timestamps
+4. **Adds ~1-2s latency** but much better speaker boundary detection
 
-## Recommended Architecture for Persuasion Dojo
+### Phase 4: FluidAudio on Apple Neural Engine (Future)
 
-Given the ScreenCaptureKit capture method (mixed audio, no meeting bot), here is the recommended layered approach, ordered by implementation priority:
+For zero-CPU-cost diarization:
 
-### Layer 1: Mic/System Audio Split (Implement First)
-- Capture microphone input separately from ScreenCaptureKit system audio
-- This gives you "user is speaking" vs. "other participants are speaking" with 100% accuracy
-- Enables the most critical coaching prompts immediately
-- **Cost:** Low — modify `audio.py` to capture two streams
-- **Accuracy:** 100% for user identification
+1. **Integrate FluidAudio Swift SDK** into AudioCapture binary
+2. **Run diarization on ANE** alongside audio capture
+3. **Send diarization labels through named pipe** alongside audio data
+4. **Offloads all ML** from Python process entirely
 
-### Layer 2: Calendar Roster Pre-Seeding (Implement Second)
-- Pull attendee list from `calendar_service.py` before meeting starts
-- Know the N possible speakers before audio starts
-- Constrain the identification problem from "who in the world?" to "which of these 4-8 people?"
-- **Cost:** Low — already have `calendar_service.py` and `pre_seeding.py`
-- **Accuracy:** Roster accuracy depends on calendar data quality
+### Phase Dependencies
 
-### Layer 3: Voiceprint Enrollment for User (Implement Third)
-- During onboarding, record the user reading 2-3 sentences
-- Use Picovoice Eagle (on-device, privacy-safe) to create a voiceprint
-- Provides a secondary signal for "user is speaking" beyond mic/system split
-- Also enables identification when user is in a conference room (mic split fails)
-- **Cost:** Medium — integrate Picovoice Eagle SDK
-- **Accuracy:** 96%+ with 3 seconds of enrollment speech
-
-### Layer 4: LLM Contextual Inference (Implement Fourth)
-- During the meeting, pass accumulated transcript + calendar roster to Claude
-- Ask: "Given these attendees [names from calendar], assign speaker labels to names based on context"
-- Use self-identification, direct address, role indicators as signals
-- Run every 60 seconds with growing context window
-- Apply confidence thresholds — only assign a name when confidence is high
-- **Cost:** Low marginal — already calling Claude for coaching prompts
-- **Accuracy:** Variable, improves over meeting duration. Best for 3+ person calls.
-
-### Layer 5: Passive Voiceprint Learning (Implement Later)
-- After a meeting where speakers are identified (via LLM or user confirmation), save voiceprints for identified speakers
-- Next meeting with same participants, recognize them from voice
-- Jamie AI's approach: first meeting requires labeling, subsequent meetings are automatic
-- **Cost:** Medium — requires voiceprint storage and matching infrastructure
-- **Accuracy:** 89-95%, improving with more samples per speaker
-
-### Not Recommended for V1
-- **Meeting bot approach:** Conflicts with Persuasion Dojo's privacy-first, no-bot architecture
-- **End-to-end neural models (SpeakerLM):** Not production-ready
-- **Amazon Connect Voice ID:** Being retired May 2026
+```
+Phase 1 (SpeakerResolver fixes)
+  |
+  ├── Phase 2 (WeSpeaker voiceprints)
+  │     |
+  │     └── Phase 3 (diart local diarization) — only if Deepgram still unreliable
+  │
+  └── Phase 4 (FluidAudio ANE) — independent, future
+```
 
 ---
 
-## Key Insight: The Problem is Easier Than It Looks
+## Part 6: Validation Gates
 
-For Persuasion Dojo's specific use case, you don't need to solve the general speaker identification problem. You need to answer three specific questions:
+Before implementing, validate with real ScreenCaptureKit audio (per CLAUDE.md constraints):
 
-1. **"Is the user speaking right now?"** — Solved by mic/system audio split (Layer 1). This enables 80% of coaching prompts.
+| Gate | Target | Method |
+|------|--------|--------|
+| Deepgram nova-3 mono DER | ≥85% accuracy | 5 real SCK-captured meetings |
+| WeSpeaker ONNX inference latency | <100ms per 3s segment | M-series Mac CPU benchmark |
+| Cosine similarity threshold | Maximize precision, maintain recall | ROC curve on 10+ SCK sessions |
+| Cross-session voiceprint stability | Same person ≥0.85 cosine similarity across sessions | 3+ sessions with same participants |
 
-2. **"Who is this other speaker?"** — Partially solved by calendar roster (Layer 2) + LLM inference (Layer 4). Enables audience-layer prompts ("Sarah is an Inquisitor — she needs data").
+---
 
-3. **"Is this the same person who spoke 2 minutes ago?"** — Solved by Deepgram diarization (already implemented). Speaker consistency within a session is easier than cross-session identification.
+## Part 7: Expected Outcomes
 
-The hardest problem — "map speaker_0 to a real name in a multi-party call with strangers" — is also the least important for V1. The user almost always knows who's on the call. A simple UI confirmation ("Is Speaker 2 Sarah Chen?") combined with LLM inference handles the long tail.
+| Capability | Current | After Phase 1 | After Phase 2 |
+|-----------|---------|---------------|---------------|
+| Me/Them split | 100% accurate | 100% accurate | 100% accurate |
+| Multi-remote speaker separation | Deepgram mono (unreliable) | Deepgram nova-3 (better) | Deepgram + voiceprint confirmation |
+| Name resolution latency | 60s minimum | 15s minimum | 5-10s (audio-based) |
+| Cross-session recognition | None | DB-backed names | DB-backed voiceprints |
+| Calendar-seeded matching | Text only | Fuzzy text | Text + audio |
+| Wrong name correction | Impossible (locked) | Correctable with decay | Audio evidence overrides text |
 
 ---
 
 ## Sources
 
-- [Granola Transcription Docs](https://docs.granola.ai/help-center/taking-notes/transcription)
-- [Granola Review - tl;dv](https://tldv.io/blog/granola-review/)
-- [Google Meet Transcription Help](https://support.google.com/meet/answer/12849897?hl=en)
-- [Deepgram Diarization Docs](https://developers.deepgram.com/docs/diarization)
-- [Deepgram GitHub Discussion #475](https://github.com/orgs/deepgram/discussions/475)
-- [Deepgram Next-Gen Diarization](https://deepgram.com/learn/nextgen-speaker-diarization-and-language-detection-models)
-- [Otter.ai Speaker Identification Overview](https://help.otter.ai/hc/en-us/articles/21665587209367-Speaker-Identification-Overview)
-- [Otter.ai Best Practices for Speaker ID](https://help.otter.ai/hc/en-us/articles/37817241040535-Best-Practices-to-Maximize-Speaker-Identification)
-- [Otter.ai Speaker Tagging](https://help.otter.ai/hc/en-us/articles/360048465453-Tagging-speaker-names-in-a-conversation)
-- [Recall.ai Perfect Diarization Docs](https://docs.recall.ai/docs/perfect-diarization)
-- [Recall.ai Speaker Labels Blog](https://www.recall.ai/blog/speaker-labels-and-speaker-diarization-explained-how-to-obtain-and-use-them-for-accurate-transcription)
-- [Recall.ai Separate Audio Per Participant](https://docs.recall.ai/docs/how-to-get-separate-audio-per-participant-realtime)
-- [AssemblyAI Speaker Identification Docs](https://www.assemblyai.com/docs/speech-understanding/speaker-identification)
-- [AssemblyAI Speaker ID Blog](https://www.assemblyai.com/blog/assemblyai-speaker-identification-diarization)
-- [Picovoice Eagle SDK](https://picovoice.ai/platform/eagle/)
-- [Picovoice Eagle Docs](https://picovoice.ai/docs/eagle/)
-- [Picovoice State of Speaker Recognition 2026](https://picovoice.ai/blog/state-of-speaker-recognition/)
-- [Amazon Connect Voice ID](https://docs.aws.amazon.com/connect/latest/adminguide/voice-id.html)
-- [Jamie AI Speaker Identification Docs](https://docs.meetjamie.ai/pages/getting_started/identify_speaker)
-- [Jamie AI Help Center - Speaker ID](https://intercom.help/meetjamie/en/articles/7913795-how-to-identify-speakers-in-jamie)
-- [SpeakerLM Paper (arXiv:2508.06372)](https://arxiv.org/abs/2508.06372)
-- [LLM-based Speaker Diarization Correction (ScienceDirect)](https://www.sciencedirect.com/science/article/abs/pii/S0167639325000391)
-- [Speaker Diarization Privacy Risks - Basil AI](https://basilai.app/articles/2026-03-15-speaker-diarization-privacy-risks-who-gets-identified-in-cloud-transcription.html)
-- [FluidAudio (Core ML)](https://github.com/FluidInference/FluidAudio)
-- [Picovoice Falcon (On-Device Diarization)](https://github.com/Picovoice/falcon)
-- [Zoom Real-Time Media Streams](https://www.zoom.com/en/realtime-media-streams/)
-- [Nylas Notetaker API](https://www.nylas.com/products/notetaker-api/speaker-diarization-api/)
-- [Shadow.do - Bot-Free Notetakers](https://www.shadow.do/blog/best-ai-meeting-note-takers-that-dont-join-as-a-bot-2026)
-- [Meetily (Open Source)](https://github.com/Zackriya-Solutions/meeting-minutes)
+### Granola Analysis
+- Granola app binary analysis: `/Applications/Granola.app` v7.99.1
+- [Granola Help Center: Transcription](https://docs.granola.ai/help-center/taking-notes/transcription)
+- [Granola Security](https://www.granola.ai/security)
+- [getprobo/reverse-engineering-granola-api](https://github.com/getprobo/reverse-engineering-granola-api)
+
+### Competitor Analysis
+- [Otter.ai Speaker Identification](https://help.otter.ai/hc/en-us/articles/21665587209367)
+- [Recall.ai Desktop Recording SDK](https://www.recall.ai/product/desktop-recording-sdk)
+- [Recall.ai Perfect Diarization](https://docs.recall.ai/docs/perfect-diarization)
+- [Recall.ai: How to build a desktop recording app](https://www.recall.ai/blog/how-to-build-a-desktop-recording-app)
+- [Show HN: Caret](https://news.ycombinator.com/item?id=44522847)
+
+### Academic / Technical
+- [Deepgram: Multichannel vs Diarization](https://developers.deepgram.com/docs/multichannel-vs-diarization)
+- [AssemblyAI: Multichannel Speaker Diarization](https://www.assemblyai.com/blog/multichannel-speaker-diarization)
+- [Microsoft: Meeting Transcription Using Virtual Microphone Arrays](https://ar5iv.labs.arxiv.org/html/1905.02545)
+- [Advances in Online Audio-Visual Meeting Transcription](https://ar5iv.labs.arxiv.org/html/1912.04979)
+- [ECAPA-TDNN](https://arxiv.org/abs/2005.07143)
+- [Systematic Evaluation of Online Diarization Latency](https://arxiv.org/abs/2407.04293)
+- [Optimizing DIART Inference](https://arxiv.org/abs/2408.02341)
+
+### Open Source Tools
+- [diart](https://github.com/juanmc2005/diart) — MIT, streaming diarization
+- [WeSpeaker](https://github.com/wenet-e2e/wespeaker) — Apache 2.0, speaker embeddings
+- [FluidAudio](https://github.com/FluidInference/FluidAudio) — Apache 2.0, CoreML diarization
+- [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) — MIT
+- [NVIDIA Streaming Sortformer](https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1) — NeMo
+- [Picovoice Falcon](https://picovoice.ai/platform/falcon/) — Proprietary
+- [WhisperLiveKit](https://github.com/QuentinFuxa/WhisperLiveKit) — Whisper + streaming diarization
+
+### Community Discussions
+- [HN: Open-source Granola alternative](https://news.ycombinator.com/item?id=44271745)
+- [HN: Granola API Reverse Engineering](https://news.ycombinator.com/item?id=45920768)
+- [Medium: Why I ditched Granola for OBS](https://medium.com/@ilia_zadiabin/why-i-ditched-granola-for-a-15-minute-obs-setup-ee8763c55e7e)

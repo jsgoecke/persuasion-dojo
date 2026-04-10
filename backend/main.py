@@ -1426,11 +1426,46 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     # ── Speaker resolver (LLM-based name mapping) ──────────────────────
     from backend.speaker_resolver import SpeakerResolver
 
-    known_names = [p.get("name", "") for p in participants_info if p.get("name")]
+    # Merge calendar names + cross-session DB names (calendar takes precedence)
+    calendar_names = [p.get("name", "") for p in participants_info if p.get("name")]
+    db_names = await SpeakerResolver.load_known_names_from_db(
+        get_db_session, _DEFAULT_USER_ID,
+    )
+    # Deduplicate: calendar first, then DB names not already present (case-insensitive)
+    _seen_lower = {n.lower() for n in calendar_names}
+    merged_names = list(calendar_names)
+    for db_name in db_names:
+        if db_name.lower() not in _seen_lower:
+            merged_names.append(db_name)
+            _seen_lower.add(db_name.lower())
+
+    async def _persist_speaker_mapping(
+        speaker_id: str, name: str, confidence: float,
+    ) -> None:
+        """Persist resolved speaker name to Participant DB each cycle."""
+        try:
+            async with get_db_session() as db:
+                from backend.identity import resolve_speaker
+                existing = await resolve_speaker(db, _DEFAULT_USER_ID, name)
+                if existing is not None:
+                    existing.updated_at = datetime.now(timezone.utc)
+                else:
+                    from backend.models import Participant
+                    import uuid
+                    participant = Participant(
+                        id=str(uuid.uuid4()),
+                        user_id=_DEFAULT_USER_ID,
+                        name=name,
+                    )
+                    db.add(participant)
+        except Exception:
+            logger.debug("SpeakerResolver: persist callback failed for %s", name)
+
     resolver = SpeakerResolver(
         anthropic_client=AsyncAnthropic(),
-        known_names=known_names,
+        known_names=merged_names,
         ws_send=ws.send_json,
+        on_mapping_updated=_persist_speaker_mapping,
     )
     # Stash resolver on pipeline for session-end access
     pipeline.resolver = resolver  # type: ignore[attr-defined]

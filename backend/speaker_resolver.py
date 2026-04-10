@@ -7,6 +7,7 @@ periodically asks Claude to map those labels to real names using:
 
 1. Calendar roster (known attendees)
 2. Transcript context (self-identification, direct address, role indicators)
+3. Cross-session participant database (names from past meetings)
 
 The resolver runs as a background asyncio task, invoking Claude every
 ``interval_s`` seconds with the accumulated transcript.  High-confidence
@@ -18,6 +19,7 @@ Usage
         anthropic_client=AsyncAnthropic(),
         known_names=["Alice Chen", "Bob Smith"],
         ws_send=ws.send_json,
+        on_mapping_updated=my_persist_callback,
     )
     resolver.add_utterance("counterpart_0", "I think we should review Q3...")
     await resolver.start()
@@ -31,6 +33,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from typing import Awaitable, Callable
 
 from anthropic import AsyncAnthropic
@@ -39,6 +43,9 @@ logger = logging.getLogger(__name__)
 
 # Model used for speaker resolution — Haiku for speed, same as coaching engine.
 _MODEL = "claude-haiku-4-5-20241022"
+
+# Fuzzy name matching threshold — shared with identity.py convention.
+FUZZY_MATCH_THRESHOLD = 0.85
 
 _SYSTEM_PROMPT = """\
 You are identifying speakers in a meeting transcript.
@@ -80,17 +87,20 @@ class SpeakerResolver:
         *,
         anthropic_client: AsyncAnthropic | None = None,
         known_names: list[str] | None = None,
-        interval_s: float = 60.0,
+        interval_s: float = 15.0,
         confidence_threshold: float = 0.7,
         lock_threshold: float = 0.8,
         ws_send: Callable[..., Awaitable[None]] | None = None,
+        on_mapping_updated: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         self._client = anthropic_client or AsyncAnthropic()
-        self._known_names = known_names or []
+        # Filter out None/empty values from known_names
+        self._known_names = [n for n in (known_names or []) if n]
         self._interval = interval_s
         self._threshold = confidence_threshold
         self._lock_threshold = lock_threshold
         self._ws_send = ws_send
+        self._on_mapping_updated = on_mapping_updated
 
         self._transcript: list[dict[str, str]] = []
         self._mappings: dict[str, str] = {}
@@ -99,6 +109,7 @@ class SpeakerResolver:
 
         self._task: asyncio.Task | None = None
         self._running = False
+        self._last_resolved_len = 0  # track transcript length to skip no-op cycles
 
     # ------------------------------------------------------------------
     # Public API
@@ -142,6 +153,58 @@ class SpeakerResolver:
         return dict(self._mappings)
 
     # ------------------------------------------------------------------
+    # DB pre-seeding
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def load_known_names_from_db(
+        db_session_factory: Callable,
+        user_id: str,
+    ) -> list[str]:
+        """Load participant names from past sessions (last 90 days) for this user."""
+        try:
+            from sqlalchemy import select
+
+            from backend.models import Participant
+
+            async with db_session_factory() as db:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+                result = await db.execute(
+                    select(Participant.name).where(
+                        Participant.user_id == user_id,
+                        Participant.name.isnot(None),
+                        Participant.updated_at >= cutoff,
+                    )
+                )
+                return [row[0] for row in result.fetchall() if row[0]]
+        except Exception:
+            logger.warning("SpeakerResolver: failed to load names from DB")
+            return []
+
+    # ------------------------------------------------------------------
+    # Fuzzy name matching
+    # ------------------------------------------------------------------
+
+    def _fuzzy_match_name(self, name: str) -> str | None:
+        """Return best matching known name, or None if no match >= threshold."""
+        if not self._known_names:
+            return None
+        best_name: str | None = None
+        best_ratio = 0.0
+        normalized = name.strip().lower()
+        for known in self._known_names:
+            ratio = SequenceMatcher(None, normalized, known.lower()).ratio()
+            if ratio >= FUZZY_MATCH_THRESHOLD and ratio > best_ratio:
+                best_ratio = ratio
+                best_name = known
+        if best_name is not None:
+            logger.debug(
+                "SpeakerResolver: fuzzy matched %r → %r (ratio=%.3f)",
+                name, best_name, best_ratio,
+            )
+        return best_name
+
+    # ------------------------------------------------------------------
     # Background loop
     # ------------------------------------------------------------------
 
@@ -154,6 +217,11 @@ class SpeakerResolver:
             # Need enough context for meaningful inference
             if len(self._transcript) < 5:
                 continue
+            # Skip if no new utterances since last cycle
+            current_len = len(self._transcript)
+            if current_len == self._last_resolved_len:
+                continue
+            self._last_resolved_len = current_len
             try:
                 await self._resolve_once()
             except Exception:
@@ -161,8 +229,14 @@ class SpeakerResolver:
 
     async def _resolve_once(self) -> None:
         """Send transcript + roster to Claude, parse response, update mappings."""
-        # Build transcript text (last 100 utterances for context window)
-        recent = self._transcript[-100:]
+        # Build transcript text: first 20 + last 80 utterances to preserve
+        # early introductions ("Hi, I'm Sarah") in long meetings.
+        n = len(self._transcript)
+        if n <= 100:
+            recent = list(self._transcript)
+        else:
+            recent = self._transcript[:20] + self._transcript[-80:]
+
         transcript_text = "\n".join(
             f'{u["speaker"]}: {u["text"]}' for u in recent
         )
@@ -183,6 +257,11 @@ class SpeakerResolver:
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
+
+        # Guard against empty content array
+        if not response.content:
+            logger.warning("SpeakerResolver: empty content in LLM response")
+            return
 
         # Parse the response
         text = response.content[0].text.strip()
@@ -208,10 +287,29 @@ class SpeakerResolver:
             if not speaker_id or not name:
                 continue
 
-            # When a known attendees list exists, only accept names from it
-            if self._known_names and name not in self._known_names:
-                logger.debug("SpeakerResolver: rejected name %r — not in attendees list", name)
-                continue
+            # Name validation: fuzzy match against known attendees, or validate
+            # plausibility when no roster is available.
+            if self._known_names:
+                matched = self._fuzzy_match_name(name)
+                if matched is None:
+                    logger.debug(
+                        "SpeakerResolver: rejected name %r — no fuzzy match in attendees",
+                        name,
+                    )
+                    continue
+                name = matched  # Use the canonical known name
+            else:
+                # No roster — validate name is plausible (not "speaker_0", etc.)
+                try:
+                    from backend.identity import is_plausible_speaker_name
+                    if not is_plausible_speaker_name(name):
+                        logger.debug(
+                            "SpeakerResolver: rejected implausible name %r (no roster)",
+                            name,
+                        )
+                        continue
+                except ImportError:
+                    pass  # identity module unavailable, skip validation
 
             # Skip locked mappings (user-confirmed or high-confidence)
             if speaker_id in self._locked:
@@ -221,10 +319,18 @@ class SpeakerResolver:
             if confidence < self._threshold:
                 continue
 
-            # Only update if confidence improved or this is a new mapping
+            # Confidence comparison with flip-flop guard:
+            # - Same name: allow confidence to drift down (0.9 decay factor)
+            # - Different name: must strictly beat existing (prevents oscillation)
+            existing_name = self._mappings.get(speaker_id)
             existing_confidence = self._confidences.get(speaker_id, 0.0)
-            if confidence < existing_confidence:
-                continue
+            if existing_name is not None:
+                if existing_name == name:
+                    if confidence < existing_confidence * 0.9:
+                        continue
+                else:
+                    if confidence <= existing_confidence:
+                        continue
 
             self._mappings[speaker_id] = name
             self._confidences[speaker_id] = confidence
@@ -237,6 +343,13 @@ class SpeakerResolver:
                 "SpeakerResolver: %s → %s (confidence=%.2f, evidence=%s)",
                 speaker_id, name, confidence, entry.get("evidence", ""),
             )
+
+            # Persist mapping to DB via callback
+            if self._on_mapping_updated:
+                try:
+                    await self._on_mapping_updated(speaker_id, name, confidence)
+                except Exception:
+                    logger.debug("SpeakerResolver: mapping persistence callback failed")
 
             # Notify frontend
             if self._ws_send:

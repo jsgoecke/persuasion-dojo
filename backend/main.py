@@ -191,6 +191,9 @@ class SessionPipeline:
         # Each entry: {"speaker": str, "text": str, "start": float, "end": float}
         self.utterances: list[dict[str, Any]] = []
 
+        # Utterance dedup: last stored text per speaker (normalized)
+        self._last_utterance: dict[str, str] = {}
+
         # User's profile snapshot — loaded at session start for coaching context
         self.user_profile: ProfileSnapshot | None = None
 
@@ -210,6 +213,12 @@ class SessionPipeline:
         """
         if not is_final or not text.strip():
             return None
+
+        # Utterance dedup: skip exact duplicate text from same speaker
+        normalized = text.strip().lower().rstrip(".,!?;:")
+        if self._last_utterance.get(speaker_id) == normalized:
+            return None
+        self._last_utterance[speaker_id] = normalized
 
         self.utterances.append(
             {"speaker": speaker_id, "text": text, "start": start, "end": end}
@@ -1769,6 +1778,20 @@ async def _handle_message(
             if _resolver:
                 _resolver.set_confirmed_name(speaker_id, name)
 
+    elif msg_type == "prompt_feedback":
+        prompt_id = msg.get("prompt_id", "")
+        helpful = msg.get("helpful", True)
+        if prompt_id:
+            from backend.coaching_bullets import record_user_feedback
+            async with get_db_session() as db:
+                result = await record_user_feedback(db, prompt_id, bool(helpful))
+            await ws.send_json({
+                "type": "feedback_ack",
+                "prompt_id": prompt_id,
+                "helpful": bool(helpful),
+                "ok": result is not None,
+            })
+
     else:
         await ws.send_json(
             {"type": "error", "message": f"Unknown message type: {msg_type!r}"}
@@ -1813,9 +1836,16 @@ async def _handle_utterance(
     if prompt is None:
         return
 
+    # Generate prompt ID upfront so we can send it to the frontend for feedback
+    prompt_id = str(uuid.uuid4())
+    bullet_ids_raw = getattr(prompt, "bullet_ids_used", None) or ""
+    first_bullet_id = bullet_ids_raw.split(",")[0].strip() if bullet_ids_raw else ""
+
     await ws.send_json(
         {
             "type": "coaching_prompt",
+            "prompt_id": prompt_id,
+            "bullet_id": first_bullet_id,
             "layer": prompt.layer,
             "text": prompt.text,
             "is_fallback": prompt.is_fallback,
@@ -1839,6 +1869,7 @@ async def _handle_utterance(
     async with get_db_session() as db:
         db.add(
             Prompt(
+                id=prompt_id,
                 session_id=pipeline.session_id,
                 layer=prompt.layer,
                 text=prompt.text,
@@ -1847,7 +1878,7 @@ async def _handle_utterance(
                 was_shown=True,
                 utterance_index=len(pipeline.utterances) - 1,
                 counterpart_archetype=counterpart_arch,
-                bullet_ids_used=getattr(prompt, "bullet_ids_used", None) or None,
+                bullet_ids_used=bullet_ids_raw or None,
             )
         )
 

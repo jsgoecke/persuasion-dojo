@@ -27,7 +27,10 @@ If no cached prompt exists yet, None is returned and no prompt is shown.
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Literal
 
@@ -35,9 +38,10 @@ from anthropic import AsyncAnthropic
 
 from backend.coaching_memory import get_coaching_context as _get_legacy_coaching_context
 from backend.elm_detector import ELMEvent
-from backend.models import ProfileSnapshot
+from backend.models import CoachingBullet, ProfileSnapshot
 from backend.profiler import WindowClassification
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Types
@@ -45,7 +49,24 @@ from backend.profiler import WindowClassification
 
 CoachingLayer = Literal["self", "audience", "group"]
 
+# Personalization-focused system prompt: Haiku adapts a pre-written tip,
+# never generates from scratch. This eliminates refusals (always has a tip
+# to work with) and reduces latency.
 _SYSTEM_PROMPT = (
+    "You are a $500/hr executive communication coach. "
+    "You will receive a pre-written coaching tip and live conversation context. "
+    "Your job: adapt the tip to the specific moment. "
+    "Use the person's actual name if available. "
+    "Reference what was just said if relevant. "
+    "Keep the core advice, just make it feel timely and personal.\n\n"
+    "Output EXACTLY ONE tip: a short WHY clause (≤8 words) followed by "
+    "a dash and the ACTION (≤12 words, verb-first imperative).\n"
+    "If the pre-written tip already fits perfectly, output it as-is.\n"
+    "Never say you can't help. Never explain. Just output the tip."
+)
+
+# Legacy generation prompt (used only when bullet store is empty)
+_LEGACY_SYSTEM_PROMPT = (
     "You are a $500/hr executive communication coach embedded in a live meeting overlay. "
     "You use the Communicator Superpower framework:\n"
     "- Architect: needs data, structure, evidence before moving.\n"
@@ -66,9 +87,39 @@ _SYSTEM_PROMPT = (
     "Output only the tip."
 )
 
+# Refusal detection patterns (Haiku saying it can't help)
+_REFUSAL_PATTERNS = re.compile(
+    r"(?i)(?:"
+    r"I (?:can(?:no|'?)t|cannot) (?:generate|provide|create|give|offer|help|coach|produce)"
+    r"|I need (?:more|additional|further) (?:context|information|data|transcript)"
+    r"|the transcript (?:is|appears|seems) (?:garbled|unclear|empty|insufficient)"
+    r"|I'?m (?:unable|not able) to"
+    r"|I don'?t have (?:enough|sufficient)"
+    r"|the playbook (?:contains|has|includes) (?:fabricated|fake|invalid)"
+    r"|pseudo-scientific"
+    r"|I apologize"
+    r"|I'?m sorry"
+    r")"
+)
+
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 80   # ~25 words (why clause + action), with headroom
 _FLEX_NOTE_ENABLED = True  # Killswitch: set False to suppress flexibility notes
+_W_LAYER_BOOST = 5.0  # Score bonus for underrepresented coaching layers
+
+
+def _is_refusal(text: str) -> bool:
+    """Detect if Haiku returned a refusal instead of a coaching tip."""
+    if not text or not text.strip():
+        return True
+    return bool(_REFUSAL_PATTERNS.search(text))
+
+
+def _graceful_type(archetype: str) -> str:
+    """Replace 'Unknown'/'Undetermined' with descriptive text for Haiku."""
+    if archetype in ("Unknown", "Undetermined", ""):
+        return "a participant whose style you're still reading"
+    return archetype
 
 # Human-readable labels for ELM states used in prompts
 _ELM_STATE_DESCRIPTION: dict[str, str] = {
@@ -201,6 +252,22 @@ class CoachingEngine:
         self._cache: dict[CoachingLayer, CoachingPrompt] = {}
         # Bullet IDs from the most recent context selection (set per prompt cycle)
         self._last_bullet_ids: str = ""
+
+        # Selection-based dedup: track shown bullet IDs this session
+        self._shown_bullet_ids: set[str] = set()
+        self._recent_bullet_ids: deque[str] = deque(maxlen=10)
+
+        # Layer diversity: track recent prompt layers for boost calculation
+        self._recent_layers: deque[str] = deque(maxlen=3)
+
+        # Session start time for dedup window management
+        self._session_start: float = time.monotonic()
+
+        # Observability counters
+        self._session_unique_count: int = 0
+        self._fallback_count: int = 0
+        self._personalized_count: int = 0
+        self._dedup_suppressed_count: int = 0
 
     @property
     def user_archetype(self) -> str:
@@ -371,33 +438,48 @@ class CoachingEngine:
             else event.utterance[:80]
         )
 
-        # Use profiler classification if available, fall back to pre-seeded participant data
         counterpart_type = participant.superpower if participant else self._lookup_participant(event.speaker_id)
-        user_type = (
+        user_type = _graceful_type(
             user.archetype if user and user.archetype != "Undetermined"
             else self._user_archetype
         )
+        counterpart_type = _graceful_type(counterpart_type)
+
+        counterpart_name = self._resolve_speaker_name(event.speaker_id)
+        pairing_note = self._enriched_pairing_advice(counterpart_type, counterpart_name)
 
         state_desc = _ELM_STATE_DESCRIPTION.get(state, state.replace("_", " "))
         goal = _ELM_COACHING_GOAL.get(state, "improve the conversation")
 
-        # Build counterpart-specific advice based on archetype pairing + effectiveness + fingerprint
-        counterpart_name = self._resolve_speaker_name(event.speaker_id)
-        pairing_note = self._enriched_pairing_advice(counterpart_type, counterpart_name)
+        # Build counterpart label
+        counterpart_label = (
+            f"{counterpart_name} ({counterpart_type})" if counterpart_name
+            else f"the other person ({counterpart_type})"
+        )
 
-        # Include learned coaching context from prior sessions (ACE bullet store)
-        playbook_section = ""
-        self._last_bullet_ids = ""
-        if self._user_id:
-            ctx, bullet_ids = await self._load_coaching_context(
-                counterpart_type, state
-            )
-            if ctx:
-                playbook_section = f"\n{ctx}\n\n"
-            if bullet_ids:
-                self._last_bullet_ids = ",".join(bullet_ids)
+        # Build context snippet for personalization
+        context_snippet = (
+            f"{counterpart_label} is {state_desc}. "
+            f'They just said: "{evidence_text[:80]}". '
+            f"Goal: {goal}"
+        )
 
-        # Plain-English situation description (no academic jargon)
+        # Try select+personalize first
+        prompt = await self._select_and_personalize(
+            layer="audience",
+            triggered_by=f"elm:{state}",
+            speaker_id=event.speaker_id,
+            user_type=user_type,
+            counterpart_type=counterpart_type,
+            counterpart_name=counterpart_name,
+            elm_state=state,
+            context_snippet=context_snippet,
+        )
+
+        if prompt is not None:
+            return prompt
+
+        # Legacy ELM fallback (no bullets available)
         if state == "ego_threat":
             route_note = "They feel attacked — logic won't land right now. Acknowledge their point first."
         elif state == "shortcut":
@@ -407,19 +489,12 @@ class CoachingEngine:
         else:
             route_note = ""
 
-        # Build counterpart label: "Sarah (Architect)" or just "Architect" if no name
-        counterpart_label = (
-            f"{counterpart_name} ({counterpart_type})" if counterpart_name
-            else counterpart_type
-        )
-
         user_msg = (
             f"Counterpart: {counterpart_label} — {state_desc}\n"
             f"What's happening: {route_note}\n"
             f'What they just said: "{evidence_text}"\n'
             f"You ({user_type}) → {counterpart_label}: {pairing_note}\n"
             f"Goal: {goal}\n"
-            f"{playbook_section}"
             f"Give a plain-English coaching tip that names {counterpart_name or 'the counterpart'} and tells me exactly what to do:"
         )
         return await self._call_haiku(
@@ -433,51 +508,247 @@ class CoachingEngine:
         recent_transcript: list[dict[str, str]] | None = None,
     ) -> CoachingPrompt | None:
         """Self-layer general cadence prompt with conversation context."""
-        # Prefer ProfileSnapshot archetype (behavioral data) over the static constructor value
-        user_type = (
+        user_type = _graceful_type(
             user.archetype if user and user.archetype != "Undetermined"
             else self._user_archetype
         )
-        context = user.context if user else "meeting"
-        counterpart_type = participant.superpower if participant else "Unknown"
+        meeting_context = user.context if user else "meeting"
+        counterpart_type = _graceful_type(
+            participant.superpower if participant else "Unknown"
+        )
         counterpart_name = self._resolve_speaker_name(participant.speaker_id) if participant else ""
 
-        # Mention context shift when the user's style differs by meeting type
-        shift_note = ""
-        if user and user.context_shifts:
-            shift_note = (
-                f" (you typically show as {user.core_archetype} "
-                f"in other contexts)"
-            )
-
-        # Flexibility-aware coaching note (~12 words, added to Haiku input)
-        # Descriptive (not prescriptive) — lets Haiku decide the coaching action.
-        flex_note = ""
-        if _FLEX_NOTE_ENABLED and user and (user.focus_variance + user.stance_variance) > 0:
-            total_var = user.focus_variance + user.stance_variance
-            if total_var > 500:  # high variance = genuinely flexes across contexts
-                flex_note = "This person adapts their style across different contexts."
-            elif total_var < 100 and user.core_sessions >= 5:
-                flex_note = "This person tends to use the same style regardless of context."
-
-        # Build recent conversation snippet for context
-        transcript_section = ""
+        # Build recent conversation snippet for Haiku context
+        transcript_snippet = ""
         if recent_transcript:
             lines = []
-            for u in recent_transcript[-8:]:
+            for u in recent_transcript[-5:]:
                 speaker = u.get("speaker", "?")
-                text = u.get("text", "")[:120]
+                text = u.get("text", "")[:80]
                 if speaker == self._user_speaker:
                     label = "You"
                 else:
                     resolved = self._resolve_speaker_name(speaker)
                     label = resolved if resolved else speaker
-                lines.append(f"  {label}: {text}")
-            transcript_section = (
-                "Recent conversation:\n" + "\n".join(lines) + "\n\n"
+                lines.append(f"{label}: {text}")
+            transcript_snippet = " | ".join(lines)
+
+        context_snippet = transcript_snippet or "conversation in progress"
+
+        prompt = await self._select_and_personalize(
+            layer="self",
+            triggered_by="cadence:self",
+            speaker_id="",
+            user_type=user_type,
+            counterpart_type=counterpart_type,
+            counterpart_name=counterpart_name,
+            elm_state=None,
+            context_snippet=context_snippet,
+            meeting_context=meeting_context,
+            user_profile=user,
+        )
+        if prompt is not None:
+            return prompt
+
+        # Legacy fallback (no bullets in store)
+        return await self._legacy_general_prompt(
+            "self", "cadence:self", "",
+            user_type, counterpart_type, counterpart_name,
+            context_snippet, meeting_context, user,
+        )
+
+    # ------------------------------------------------------------------
+    # Select + Personalize (core of Approach B)
+    # ------------------------------------------------------------------
+
+    async def _select_and_personalize(
+        self,
+        *,
+        layer: CoachingLayer,
+        triggered_by: str,
+        speaker_id: str,
+        user_type: str,
+        counterpart_type: str,
+        counterpart_name: str,
+        elm_state: str | None,
+        context_snippet: str,
+        meeting_context: str = "meeting",
+        user_profile: ProfileSnapshot | None = None,
+    ) -> CoachingPrompt | None:
+        """
+        Core select+personalize flow:
+        1. Select the best bullet from the store (Python, <10ms)
+        2. Ask Haiku to personalize it for the current moment (<1s)
+        3. If Haiku fails or refuses, show the pre-written tip verbatim
+
+        This eliminates refusals (Haiku always has a concrete tip to work with)
+        and makes dedup trivial (track bullet IDs, not text similarity).
+        """
+        # Compute layer boost if recent prompts were all same layer
+        layer_boost = self._compute_layer_boost()
+
+        # Step 1: Select a bullet
+        bullet = await self._select_bullet(
+            counterpart_type=counterpart_type,
+            elm_state=elm_state,
+            user_archetype=user_type,
+            layer_boost=layer_boost,
+        )
+
+        if bullet is None:
+            # No bullets available — let the caller handle the fallback
+            return None
+
+        # Track selection for dedup
+        self._shown_bullet_ids.add(bullet.id)
+        self._recent_bullet_ids.append(bullet.id)
+        self._session_unique_count += 1
+
+        # Step 2: Personalize with Haiku
+        counterpart_ref = counterpart_name or "the other person"
+        user_msg = (
+            f"PRE-WRITTEN TIP: {bullet.content}\n"
+            f"CONTEXT: {counterpart_ref} is {counterpart_type}. "
+            f"You are {user_type}. "
+            f"Recent conversation: {context_snippet}\n"
+            f"Adapt this tip for right now."
+        )
+
+        try:
+            response = await asyncio.wait_for(
+                self._client.messages.create(
+                    model=self._model,
+                    max_tokens=_MAX_TOKENS,
+                    system=_SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": user_msg}],
+                ),
+                timeout=self._timeout,
+            )
+            text = response.content[0].text.strip()
+
+            # Check for refusal or empty response
+            if not text or _is_refusal(text):
+                logger.info(
+                    "coaching_cycle refusal_detected bullet_id=%s fallback=verbatim text=%s",
+                    bullet.id, text[:50] if text else "(empty)",
+                )
+                text = bullet.content
+                self._fallback_count += 1
+            else:
+                self._personalized_count += 1
+
+        except Exception:
+            # Timeout or API error — show pre-written tip verbatim (still good!)
+            text = bullet.content
+            self._fallback_count += 1
+
+        # Track the layer for diversity
+        prompt_layer = bullet.layer or layer
+        self._recent_layers.append(prompt_layer)
+
+        # Log coaching cycle metrics
+        logger.info(
+            "coaching_cycle bullet_id=%s layer=%s personalized=%s fallback=%s session_unique=%d",
+            bullet.id, prompt_layer,
+            text != bullet.content, text == bullet.content,
+            self._session_unique_count,
+        )
+
+        return CoachingPrompt(
+            layer=prompt_layer,
+            text=text,
+            is_fallback=False,
+            triggered_by=triggered_by,
+            speaker_id=speaker_id,
+            bullet_ids_used=bullet.id,
+        )
+
+    async def _select_bullet(
+        self,
+        counterpart_type: str | None = None,
+        elm_state: str | None = None,
+        user_archetype: str | None = None,
+        layer_boost: dict[str, float] | None = None,
+    ) -> CoachingBullet | None:
+        """Select the best bullet from the store, excluding recently shown ones."""
+        try:
+            from backend.coaching_bullets import select_best_bullet
+            from backend.database import get_db_session
+
+            # Determine which IDs to exclude
+            session_minutes = (time.monotonic() - self._session_start) / 60
+            if session_minutes < 15:
+                exclude = self._shown_bullet_ids
+            else:
+                # After 15 min, only exclude last 10 to allow re-surfacing
+                exclude = set(self._recent_bullet_ids)
+
+            async with get_db_session() as db:
+                return await select_best_bullet(
+                    db, self._user_id,
+                    counterpart_archetype=counterpart_type,
+                    elm_state=elm_state,
+                    user_archetype=user_archetype,
+                    exclude_ids=exclude,
+                    layer_boost=layer_boost,
+                )
+        except Exception as exc:
+            logger.warning("Bullet selection failed: %s", exc)
+            return None
+
+    def _compute_layer_boost(self) -> dict[str, float] | None:
+        """Boost underrepresented layers when recent prompts are all the same."""
+        if len(self._recent_layers) < 3:
+            return None
+        if all(layer == "self" for layer in self._recent_layers):
+            return {"audience": _W_LAYER_BOOST, "group": _W_LAYER_BOOST}
+        if all(layer == "audience" for layer in self._recent_layers):
+            return {"self": _W_LAYER_BOOST, "group": _W_LAYER_BOOST}
+        if all(layer == "group" for layer in self._recent_layers):
+            return {"self": _W_LAYER_BOOST, "audience": _W_LAYER_BOOST}
+        return None
+
+    async def _legacy_general_prompt(
+        self,
+        layer: CoachingLayer,
+        triggered_by: str,
+        speaker_id: str,
+        user_type: str,
+        counterpart_type: str,
+        counterpart_name: str,
+        context_snippet: str,
+        meeting_context: str = "meeting",
+        user_profile: ProfileSnapshot | None = None,
+    ) -> CoachingPrompt | None:
+        """
+        Fallback: generate a prompt from scratch when no bullets exist.
+
+        Uses the legacy system prompt and generation flow.
+        Only fires for new users with no bullet history.
+        """
+        counterpart_ref = (
+            f"{counterpart_name} ({counterpart_type})" if counterpart_name
+            else counterpart_type
+        )
+
+        # Context shift note
+        shift_note = ""
+        if user_profile and user_profile.context_shifts:
+            shift_note = (
+                f" (you typically show as {user_profile.core_archetype} "
+                f"in other contexts)"
             )
 
-        # Build participant roster for the prompt — with behavioral fingerprints
+        # Flexibility note
+        flex_note = ""
+        if _FLEX_NOTE_ENABLED and user_profile and (user_profile.focus_variance + user_profile.stance_variance) > 0:
+            total_var = user_profile.focus_variance + user_profile.stance_variance
+            if total_var > 500:
+                flex_note = "This person adapts their style across different contexts.\n"
+            elif total_var < 100 and user_profile.core_sessions >= 5:
+                flex_note = "This person tends to use the same style regardless of context.\n"
+
+        # Participant roster
         participants_section = ""
         if self._participants:
             roster = []
@@ -500,31 +771,29 @@ class CoachingEngine:
                 + "\n".join(roster) + "\n\n"
             )
 
-        # Include learned coaching context from prior sessions (ACE bullet store)
+        # Coaching context from legacy playbook
         playbook_section = ""
         self._last_bullet_ids = ""
         if self._user_id:
-            ctx, bullet_ids = await self._load_coaching_context(
-                counterpart_type
+            ctx = _get_legacy_coaching_context(
+                self._user_id, counterpart_type, None
             )
             if ctx:
                 playbook_section = f"{ctx}\n\n"
-            if bullet_ids:
-                self._last_bullet_ids = ",".join(bullet_ids)
 
         user_msg = (
-            f"{transcript_section}"
             f"{participants_section}"
             f"{playbook_section}"
-            f"Meeting context: {context}\n"
-            f"You are a {user_type}{shift_note}.\n"
-            + (f"{flex_note}\n" if flex_note else "")
-            + f"Primary counterpart: {f'{counterpart_name} ({counterpart_type})' if counterpart_name else counterpart_type}\n\n"
+            f"Meeting context: {meeting_context}\n"
+            f"You are {user_type}{shift_note}.\n"
+            f"{flex_note}"
+            f"Primary counterpart: {counterpart_ref}\n"
+            f"Recent conversation: {context_snippet}\n\n"
             "Read the conversation flow. Is anyone defensive, checked out, or "
             "just going along to be polite? Give ONE coaching tip in plain English that "
-            "names the specific person and tells me exactly what to do right now:"
+            f"names {counterpart_name or 'the specific person'} and tells me exactly what to do right now:"
         )
-        return await self._call_haiku("self", user_msg, "cadence:self", "")
+        return await self._call_haiku(layer, user_msg, triggered_by, speaker_id)
 
     # ------------------------------------------------------------------
     # Effectiveness-enriched advice
@@ -662,6 +931,7 @@ class CoachingEngine:
         Fire the Haiku API call with a hard timeout.
 
         On success  → return fresh CoachingPrompt (is_fallback=False).
+        On refusal  → return last cached prompt for this layer (is_fallback=True).
         On timeout  → return last cached prompt for this layer (is_fallback=True),
                       or None if no cache exists yet.
         On any other exception → same fallback behaviour.
@@ -671,12 +941,27 @@ class CoachingEngine:
                 self._client.messages.create(
                     model=self._model,
                     max_tokens=_MAX_TOKENS,
-                    system=_SYSTEM_PROMPT,
+                    system=_LEGACY_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_msg}],
                 ),
                 timeout=self._timeout,
             )
             text = response.content[0].text.strip()
+
+            # Refusal guardrail: never show user "I can't help" messages
+            if not text or _is_refusal(text):
+                logger.info("Refusal detected in legacy path: %s", text[:50] if text else "(empty)")
+                cached = self._cache.get(layer)
+                if cached:
+                    return CoachingPrompt(
+                        layer=layer,
+                        text=cached.text,
+                        is_fallback=True,
+                        triggered_by=triggered_by,
+                        speaker_id=speaker_id,
+                    )
+                return None
+
             return CoachingPrompt(
                 layer=layer,
                 text=text,
@@ -710,3 +995,11 @@ class CoachingEngine:
         """Clear cadence state and prompt cache. Call between sessions."""
         self._last_prompt_time = 0.0
         self._cache.clear()
+        self._shown_bullet_ids.clear()
+        self._recent_bullet_ids.clear()
+        self._recent_layers.clear()
+        self._session_start = time.monotonic()
+        self._session_unique_count = 0
+        self._fallback_count = 0
+        self._personalized_count = 0
+        self._dedup_suppressed_count = 0

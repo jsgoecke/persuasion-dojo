@@ -18,8 +18,14 @@ export interface CoachingPrompt {
   /** e.g. "elm:ego_threat" or "cadence:60s" */
   triggered_by: string;
   speaker_id: string;
+  /** Server-assigned prompt ID for feedback tracking. */
+  prompt_id: string;
+  /** Primary coaching bullet ID used to generate this prompt. */
+  bullet_id: string;
   /** Client-side timestamp (Date.now()) assigned when the message arrives. */
   received_at: number;
+  /** User feedback: "helpful" | "harmful" | undefined */
+  user_feedback?: "helpful" | "harmful";
 }
 
 /**

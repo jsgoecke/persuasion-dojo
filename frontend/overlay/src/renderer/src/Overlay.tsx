@@ -173,7 +173,7 @@ export function Overlay(): React.ReactElement {
     sessionId: liveSessionId, connectionState, sessionPhase, currentPrompt, prompts, sessionResult,
     errorMessage, audioLevel, transcripts, speakerNames, detectedProfiles,
     transcriptionBackend,
-    startSession, endSession, dismissPrompt, clearError, resetSession, confirmProfile,
+    startSession, endSession, dismissPrompt, clearError, resetSession, confirmProfile, sendFeedback,
   } = useCoachingSocket();
 
   const [screen, setScreen]                 = useState<Screen>("home");
@@ -1391,8 +1391,50 @@ export function Overlay(): React.ReactElement {
             <div style={{ fontSize: 17, fontWeight: 500, color: "var(--gold)", lineHeight: 1.5, marginBottom: 14 }}>
               {currentPrompt.text}
             </div>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.45 }}>
-              {currentPrompt.triggered_by && `Triggered by ${currentPrompt.triggered_by}`}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.45 }}>
+                {currentPrompt.triggered_by && `Triggered by ${currentPrompt.triggered_by}`}
+              </div>
+              {currentPrompt.prompt_id && !currentPrompt.user_feedback && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => sendFeedback(currentPrompt.prompt_id, true)}
+                    style={{
+                      background: "rgba(212, 168, 83, 0.08)", border: "1px solid rgba(212, 168, 83, 0.2)",
+                      borderRadius: 10, padding: "10px 16px", cursor: "pointer",
+                      fontSize: 13, fontFamily: BODY, fontWeight: 400, color: "var(--text-primary)",
+                      transition: "all 150ms ease",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(212, 168, 83, 0.2)"; e.currentTarget.style.color = "var(--gold)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(212, 168, 83, 0.08)"; e.currentTarget.style.color = "var(--text-primary)"; }}
+                    title="This tip was helpful"
+                  >
+                    Useful
+                  </button>
+                  <button
+                    onClick={() => sendFeedback(currentPrompt.prompt_id, false)}
+                    style={{
+                      background: "rgba(232, 230, 225, 0.04)", border: "1px solid rgba(232, 230, 225, 0.08)",
+                      borderRadius: 10, padding: "10px 16px", cursor: "pointer",
+                      fontSize: 13, fontFamily: BODY, fontWeight: 400, color: "var(--text-secondary)",
+                      transition: "all 150ms ease",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(232, 230, 225, 0.08)"; e.currentTarget.style.color = "var(--text-primary)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(232, 230, 225, 0.04)"; e.currentTarget.style.color = "var(--text-secondary)"; }}
+                    title="This tip wasn't helpful"
+                  >
+                    Not useful
+                  </button>
+                </div>
+              )}
+              {currentPrompt.user_feedback && (
+                <div style={{
+                  fontSize: 13, fontFamily: BODY, fontWeight: 400, color: "var(--text-tertiary)",
+                  padding: "5px 12px",
+                }}>
+                  {currentPrompt.user_feedback === "helpful" ? "Noted, thanks" : "Got it, won't repeat"}
+                </div>
+              )}
             </div>
           </div>
         ) : (

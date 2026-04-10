@@ -364,6 +364,9 @@ class CoachingBullet(Base):
     # Deduplication key — lightweight text fingerprint
     dedup_key: Mapped[str | None] = mapped_column(String(200), index=True)
 
+    # Coaching layer (self / audience / group) for layer-diverse selection
+    layer: Mapped[str | None] = mapped_column(String(20))
+
     # Soft delete
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     retired_reason: Mapped[str | None] = mapped_column(String(200))
@@ -519,6 +522,9 @@ class Prompt(Base):
     )
     # Comma-separated IDs of coaching bullets included in this prompt's context
     bullet_ids_used: Mapped[str | None] = mapped_column(String(1000))
+
+    # Explicit user feedback: "helpful" | "harmful" | null (from overlay tap)
+    user_feedback: Mapped[str | None] = mapped_column(String(20))
 
     session: Mapped[MeetingSession] = relationship(back_populates="prompts")
     participant: Mapped[Participant | None] = relationship()

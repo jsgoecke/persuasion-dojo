@@ -234,6 +234,8 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
           is_fallback: Boolean(msg.is_fallback),
           triggered_by: (msg.triggered_by as string) ?? "",
           speaker_id: (msg.speaker_id as string) ?? "",
+          prompt_id: (msg.prompt_id as string) ?? "",
+          bullet_id: (msg.bullet_id as string) ?? "",
           received_at: Date.now(),
         };
         setPrompts(prev => [prompt, ...prev].slice(0, MAX_HISTORY));
@@ -363,6 +365,21 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
     );
   }, []);
 
+  const sendFeedback = useCallback((promptId: string, helpful: boolean) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "prompt_feedback", prompt_id: promptId, helpful }));
+    }
+    // Optimistically update the prompt's feedback state
+    setPrompts(prev =>
+      prev.map(p =>
+        p.prompt_id === promptId
+          ? { ...p, user_feedback: helpful ? "helpful" : "harmful" }
+          : p
+      )
+    );
+  }, []);
+
   // Clean up on unmount.
   useEffect(() => {
     return () => {
@@ -390,5 +407,6 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
     clearError,
     resetSession,
     confirmProfile,
+    sendFeedback,
   };
 }

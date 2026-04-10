@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.coaching_engine import CoachingEngine, CoachingPrompt, _SYSTEM_PROMPT
+from backend.coaching_engine import CoachingEngine, CoachingPrompt, _SYSTEM_PROMPT, _LEGACY_SYSTEM_PROMPT
 from backend.elm_detector import ELMEvent
 from backend.profiler import (
     ParticipantProfiler,
@@ -128,10 +128,10 @@ class TestSystemPrompt:
     """Verify system prompt instructs Haiku to name specific people."""
 
     def test_system_prompt_names_instruction(self):
-        assert "Always name the specific person" in _SYSTEM_PROMPT
+        assert "Always name the specific person" in _LEGACY_SYSTEM_PROMPT
 
     def test_system_prompt_example_uses_name(self):
-        assert "Sarah" in _SYSTEM_PROMPT
+        assert "Sarah" in _LEGACY_SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -754,16 +754,16 @@ class TestCoachingPlainEnglish:
     """Verify coaching prompts use plain language, not academic jargon."""
 
     def test_system_prompt_bans_jargon(self):
-        """System prompt explicitly forbids ELM terminology."""
-        from backend.coaching_engine import _SYSTEM_PROMPT
-        assert "ego safety" in _SYSTEM_PROMPT.lower() or "Never use terms like" in _SYSTEM_PROMPT
-        assert "peripheral route" not in _SYSTEM_PROMPT.split("Never use terms like")[0]
-        assert "central route" not in _SYSTEM_PROMPT.split("Never use terms like")[0]
+        """Legacy system prompt explicitly forbids ELM terminology."""
+        from backend.coaching_engine import _LEGACY_SYSTEM_PROMPT
+        assert "ego safety" in _LEGACY_SYSTEM_PROMPT.lower() or "Never use terms like" in _LEGACY_SYSTEM_PROMPT
+        assert "peripheral route" not in _LEGACY_SYSTEM_PROMPT.split("Never use terms like")[0]
+        assert "central route" not in _LEGACY_SYSTEM_PROMPT.split("Never use terms like")[0]
 
     def test_system_prompt_requests_plain_english(self):
-        from backend.coaching_engine import _SYSTEM_PROMPT
-        assert "plain" in _SYSTEM_PROMPT.lower()
-        assert "jargon" in _SYSTEM_PROMPT.lower()
+        from backend.coaching_engine import _LEGACY_SYSTEM_PROMPT
+        assert "plain" in _LEGACY_SYSTEM_PROMPT.lower()
+        assert "jargon" in _LEGACY_SYSTEM_PROMPT.lower()
 
     def test_elm_descriptions_no_jargon(self):
         from backend.coaching_engine import _ELM_STATE_DESCRIPTION

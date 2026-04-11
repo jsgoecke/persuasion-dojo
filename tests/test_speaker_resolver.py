@@ -491,10 +491,13 @@ class TestSkipOptimization:
     @pytest.mark.asyncio
     async def test_skip_if_no_new_utterances(self):
         """No new utterances since last cycle → LLM not called."""
+        import time
         resolver, create_mock = _make_resolver()
         create_mock.return_value = _make_llm_response([])
 
         _add_utterances(resolver, n=6)
+        # Push start_time far back so adaptive scheduling uses the fast test interval
+        resolver._start_time = time.monotonic() - 300
 
         # First cycle: LLM is called
         await resolver.start()
@@ -680,3 +683,197 @@ class TestMalformedResponse:
         _add_utterances(resolver)
         await resolver._resolve_once()
         assert resolver.resolve("counterpart_0") == "counterpart_0"
+
+
+# ---------------------------------------------------------------------------
+# Tests — adaptive scheduling (_current_interval)
+# ---------------------------------------------------------------------------
+
+class TestAdaptiveScheduling:
+    def test_default_interval_before_any_utterance(self):
+        """Before any utterance, use the configured interval."""
+        resolver, _ = _make_resolver()
+        assert resolver._current_interval() == 0.05  # test fast interval
+
+    def test_intro_phase_interval(self):
+        """During intro phase (< 120s), interval is 10s."""
+        resolver, _ = _make_resolver()
+        resolver.add_utterance("counterpart_0", "Hello")
+        # _start_time is just set, elapsed ~ 0s
+        assert resolver._current_interval() == 10.0
+
+    def test_default_phase_after_intro(self):
+        """After 120s with unlocked speakers, use configured interval."""
+        import time
+        resolver, _ = _make_resolver()
+        resolver.add_utterance("counterpart_0", "Hello")
+        # Simulate elapsed > 120s
+        resolver._start_time = time.monotonic() - 200
+        resolver._mappings["counterpart_0"] = "Alice Chen"
+        assert resolver._current_interval() == resolver._interval
+
+    def test_coast_phase_all_locked(self):
+        """When all speakers are locked, coast at 60s."""
+        import time
+        resolver, _ = _make_resolver()
+        resolver.add_utterance("counterpart_0", "Hello")
+        resolver._start_time = time.monotonic() - 200
+        resolver._mappings["counterpart_0"] = "Alice Chen"
+        resolver._locked.add("counterpart_0")
+        assert resolver._current_interval() == 60.0
+
+    def test_coast_requires_all_locked(self):
+        """If any speaker is unlocked, don't coast."""
+        import time
+        resolver, _ = _make_resolver()
+        resolver.add_utterance("counterpart_0", "Hello")
+        resolver._start_time = time.monotonic() - 200
+        resolver._mappings["counterpart_0"] = "Alice Chen"
+        resolver._mappings["counterpart_1"] = "Bob Smith"
+        resolver._locked.add("counterpart_0")
+        # counterpart_1 is not locked
+        assert resolver._current_interval() == resolver._interval
+
+    def test_coast_requires_non_empty_mappings(self):
+        """Empty mappings should not trigger coast even with elapsed > 120s."""
+        import time
+        resolver, _ = _make_resolver()
+        resolver.add_utterance("counterpart_0", "Hello")
+        resolver._start_time = time.monotonic() - 200
+        # No mappings yet
+        assert resolver._current_interval() == resolver._interval
+
+
+# ---------------------------------------------------------------------------
+# Tests — resolver accuracy metrics
+# ---------------------------------------------------------------------------
+
+class TestResolverMetrics:
+    def test_initial_metrics(self):
+        """Fresh resolver has zero metrics."""
+        resolver, _ = _make_resolver()
+        m = resolver.metrics
+        assert m["total_resolutions"] == 0
+        assert m["user_corrections"] == 0
+        assert m["time_to_first_resolution"] is None
+        assert m["locked_at_end"] == 0
+
+    @pytest.mark.asyncio
+    async def test_total_resolutions_incremented(self):
+        """Each successful mapping bumps total_resolutions."""
+        resolver, create_mock = _make_resolver()
+        create_mock.return_value = _make_llm_response([
+            {"speaker_id": "counterpart_0", "name": "Alice Chen", "confidence": 0.85, "evidence": "named"},
+        ])
+        _add_utterances(resolver)
+        await resolver._resolve_once()
+        assert resolver.metrics["total_resolutions"] == 1
+
+    @pytest.mark.asyncio
+    async def test_time_to_first_resolution(self):
+        """time_to_first_resolution is set on the first mapping."""
+        resolver, create_mock = _make_resolver()
+        create_mock.return_value = _make_llm_response([
+            {"speaker_id": "counterpart_0", "name": "Alice Chen", "confidence": 0.85, "evidence": "named"},
+        ])
+        _add_utterances(resolver)
+        await resolver._resolve_once()
+        ttfr = resolver.metrics["time_to_first_resolution"]
+        assert ttfr is not None
+        assert isinstance(ttfr, float)
+        assert ttfr >= 0.0
+
+    def test_user_correction_tracked(self):
+        """set_confirmed_name with a different name increments user_corrections."""
+        resolver, _ = _make_resolver()
+        resolver._mappings["counterpart_0"] = "Alice Chen"
+        resolver.set_confirmed_name("counterpart_0", "Bob Smith")
+        assert resolver.metrics["user_corrections"] == 1
+
+    def test_same_name_confirmation_not_counted(self):
+        """Confirming the same name is not a correction."""
+        resolver, _ = _make_resolver()
+        resolver._mappings["counterpart_0"] = "Alice Chen"
+        resolver.set_confirmed_name("counterpart_0", "Alice Chen")
+        assert resolver.metrics["user_corrections"] == 0
+
+    def test_locked_at_end_reflects_locked_set(self):
+        """locked_at_end counts the locked speakers."""
+        resolver, _ = _make_resolver()
+        resolver._locked.add("counterpart_0")
+        resolver._locked.add("counterpart_1")
+        assert resolver.metrics["locked_at_end"] == 2
+
+    def test_confidences_property(self):
+        """confidences property returns a copy of internal state."""
+        resolver, _ = _make_resolver()
+        resolver._confidences["counterpart_0"] = 0.85
+        c = resolver.confidences
+        assert c == {"counterpart_0": 0.85}
+        # It's a copy, not a reference
+        c["counterpart_0"] = 0.0
+        assert resolver._confidences["counterpart_0"] == 0.85
+
+
+# ---------------------------------------------------------------------------
+# Tests — confidence-based prompt suppression (coaching engine integration)
+# ---------------------------------------------------------------------------
+
+class TestConfidenceSuppression:
+    """Test that CoachingEngine suppresses low-confidence speaker names."""
+
+    def _make_engine(self, participants=None):
+        from backend.coaching_engine import CoachingEngine
+        return CoachingEngine(
+            user_speaker="user",
+            anthropic_client=MagicMock(),
+            participants=participants or [],
+        )
+
+    def test_update_speaker_name_adds_new(self):
+        """update_speaker_name adds a new participant entry."""
+        engine = self._make_engine()
+        engine.update_speaker_name("counterpart_0", "Alice Chen", 0.85)
+        assert engine._resolve_speaker_name("counterpart_0") == "Alice Chen"
+
+    def test_update_speaker_name_updates_existing(self):
+        """update_speaker_name updates an existing participant's name."""
+        engine = self._make_engine([
+            {"speaker_id": "counterpart_0", "name": "Unknown", "archetype": "Architect"},
+        ])
+        engine.update_speaker_name("counterpart_0", "Alice Chen", 0.9)
+        assert engine._resolve_speaker_name("counterpart_0") == "Alice Chen"
+
+    def test_low_confidence_suppresses_name(self):
+        """Name is suppressed (returns '') when resolver_confidence < 0.7."""
+        engine = self._make_engine()
+        engine.update_speaker_name("counterpart_0", "Alice Chen", 0.5)
+        assert engine._resolve_speaker_name("counterpart_0") == ""
+
+    def test_threshold_boundary(self):
+        """Exactly 0.7 confidence is NOT suppressed."""
+        engine = self._make_engine()
+        engine.update_speaker_name("counterpart_0", "Alice Chen", 0.7)
+        assert engine._resolve_speaker_name("counterpart_0") == "Alice Chen"
+
+    def test_no_resolver_confidence_not_suppressed(self):
+        """Pre-seeded participants without resolver_confidence are never suppressed."""
+        engine = self._make_engine([
+            {"speaker_id": "counterpart_0", "name": "Alice Chen", "archetype": "Architect"},
+        ])
+        # No resolver_confidence key — should NOT suppress
+        assert engine._resolve_speaker_name("counterpart_0") == "Alice Chen"
+
+    def test_confirmed_name_full_confidence(self):
+        """User-confirmed name at confidence 1.0 is always shown."""
+        engine = self._make_engine()
+        engine.update_speaker_name("counterpart_0", "Alice Chen", 1.0)
+        assert engine._resolve_speaker_name("counterpart_0") == "Alice Chen"
+
+    def test_index_based_lookup_suppressed(self):
+        """Index-based lookup also checks resolver_confidence."""
+        engine = self._make_engine([
+            {"name": "Alice Chen", "archetype": "Architect", "resolver_confidence": 0.4},
+        ])
+        # counterpart_0 → index 0 → Alice Chen, but confidence is 0.4
+        assert engine._resolve_speaker_name("counterpart_0") == ""

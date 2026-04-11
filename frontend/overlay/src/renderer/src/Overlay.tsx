@@ -223,6 +223,14 @@ export function Overlay(): React.ReactElement {
   // Profile count for home screen badge
   const [profileCount, setProfileCount] = useState<number | null>(null);
 
+  // Live session: which participant pill's edit popover is open
+  const [editingPillId, setEditingPillId] = useState<string | null>(null);
+  const [editingPillValue, setEditingPillValue] = useState("");
+  // Track whether resolver has run at least once (cold-start suppression)
+  const resolverHasRun = detectedProfiles.some(p => p.confidence > 0);
+  // Hysteresis: once "?" badge is shown, require >= 0.8 to remove (prevents flickering)
+  const uncertainSpeakers = useRef<Set<string>>(new Set());
+
   // Go-live participant selection state
   type SetupParticipant = { id: string; name: string; archetype: string };
   const [setupParticipants, setSetupParticipants] = useState<SetupParticipant[]>([]);
@@ -430,6 +438,7 @@ export function Overlay(): React.ReactElement {
   }, [startSession, userArchetype, meetingName, setupParticipants]);
   const handleBackToHome = useCallback(() => {
     resetSession(); setScreen("home"); setMeetingName(""); setHistoryOpen(false); setSetupParticipants([]);
+    uncertainSpeakers.current.clear();
   }, [resetSession]);
 
   // ── Top bar (shared by all sub-screens) ────────────────────────────────────
@@ -1496,17 +1505,119 @@ export function Overlay(): React.ReactElement {
           )}
         </div>
 
-        {/* Participant bar */}
+        {/* Participant bar — tap-to-edit popover + confidence badge */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", paddingTop: 16, borderTop: "1px solid var(--border-subtle)", marginTop: 16 }}>
-          {detectedProfiles.length > 0 ? detectedProfiles.map(p => (
-            <span key={p.speaker_id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", background: "var(--blue-bg)", borderRadius: 20, fontSize: 12, color: "var(--blue)" }}>
-              {p.confirmed ? p.suggested_name : speakerNames[p.speaker_id] || p.speaker_id}
-              <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.4, opacity: 0.65 }}>
-                {ARCHETYPE_ABBREV[p.archetype] || "?"}
-              </span>
-              {!p.is_existing && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold)", marginLeft: 2 }} />}
-            </span>
-          )) : (
+          {detectedProfiles.length > 0 ? detectedProfiles.map(p => {
+            const displayName = p.confirmed ? p.suggested_name : speakerNames[p.speaker_id] || p.speaker_id;
+            const isEditing = editingPillId === p.speaker_id;
+            // Confidence badge: show "?" when < 0.7, hysteresis requires >= 0.8 to clear
+            let showUncertain = false;
+            if (resolverHasRun && !p.confirmed) {
+              if (p.confidence < 0.7) {
+                uncertainSpeakers.current.add(p.speaker_id);
+                showUncertain = true;
+              } else if (uncertainSpeakers.current.has(p.speaker_id)) {
+                if (p.confidence >= 0.8) {
+                  uncertainSpeakers.current.delete(p.speaker_id);
+                } else {
+                  showUncertain = true; // In deadband (0.7-0.8), keep showing
+                }
+              }
+            }
+            return (
+              <div key={p.speaker_id} style={{ position: "relative" }}>
+                <span
+                  onClick={() => {
+                    if (isEditing) return;
+                    setEditingPillId(p.speaker_id);
+                    setEditingPillValue(displayName === p.speaker_id ? "" : displayName);
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "6px 14px", background: "var(--blue-bg)", borderRadius: 20,
+                    fontSize: 12, color: "var(--blue)", cursor: "pointer",
+                    border: showUncertain ? "1px dashed var(--blue)" : "1px solid transparent",
+                    transition: "background 200ms, border-color 200ms",
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-elevated)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--blue-bg)"; }}
+                >
+                  {displayName}
+                  <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.4, opacity: 0.65 }}>
+                    {ARCHETYPE_ABBREV[p.archetype] || "?"}
+                  </span>
+                  {!p.is_existing && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold)", marginLeft: 2 }} />}
+                  {/* Gold "?" badge for low confidence */}
+                  {showUncertain && (
+                    <span style={{
+                      position: "absolute", top: -3, right: -3,
+                      width: 14, height: 14, borderRadius: "50%",
+                      background: "var(--gold)", color: "#1A1A1E",
+                      fontSize: 9, fontWeight: 700,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>?</span>
+                  )}
+                </span>
+                {/* Edit popover */}
+                {isEditing && (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 10,
+                    background: "var(--bg-card)", border: "1px solid var(--border-subtle)",
+                    borderRadius: 10, padding: "10px 12px",
+                    display: "flex", gap: 8, alignItems: "center",
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+                    minWidth: 200,
+                  }}>
+                    <input
+                      autoFocus
+                      value={editingPillValue}
+                      onChange={e => setEditingPillValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && editingPillValue.trim()) {
+                          confirmProfile(p.speaker_id, editingPillValue.trim());
+                          setEditingPillId(null);
+                        } else if (e.key === "Escape") {
+                          setEditingPillId(null);
+                        }
+                      }}
+                      placeholder="Speaker name"
+                      style={{
+                        flex: 1, fontSize: 14, fontWeight: 600, color: "var(--text-primary)",
+                        background: "var(--bg-elevated)", border: "1px solid var(--border-subtle)",
+                        borderRadius: 6, padding: "5px 8px", outline: "none",
+                        fontFamily: "DM Sans, sans-serif",
+                      }}
+                      onFocus={e => { e.target.style.borderColor = "var(--gold)"; }}
+                      onBlur={e => { e.target.style.borderColor = "var(--border-subtle)"; }}
+                    />
+                    <button
+                      onClick={() => {
+                        if (editingPillValue.trim()) {
+                          confirmProfile(p.speaker_id, editingPillValue.trim());
+                        }
+                        setEditingPillId(null);
+                      }}
+                      style={{
+                        padding: "5px 12px", borderRadius: 8,
+                        background: "var(--gold)", color: "#1A1A1E",
+                        fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
+                        fontFamily: "DM Sans, sans-serif",
+                      }}
+                    >Save</button>
+                    <button
+                      onClick={() => setEditingPillId(null)}
+                      style={{
+                        padding: "5px 8px", borderRadius: 8,
+                        background: "transparent", color: "var(--text-secondary)",
+                        fontSize: 12, fontWeight: 400, border: "none", cursor: "pointer",
+                        fontFamily: "DM Sans, sans-serif",
+                      }}
+                    >Cancel</button>
+                  </div>
+                )}
+              </div>
+            );
+          }) : (
             <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
               Detecting participants…
             </span>

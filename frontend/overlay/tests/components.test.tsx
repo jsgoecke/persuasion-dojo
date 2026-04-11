@@ -22,6 +22,8 @@ vi.mock("../src/renderer/src/hooks/useCoachingSocket", () => ({
     dismissPrompt: mockDismissPrompt,
     clearError: mockClearError,
     resetSession: mockResetSession,
+    confirmProfile: vi.fn(),
+    sendFeedback: vi.fn(),
   }),
 }));
 
@@ -34,6 +36,11 @@ const mockSocketState = {
   currentPrompt: null as unknown | null,
   sessionResult: null as unknown | null,
   errorMessage: null as string | null,
+  audioLevel: 0,
+  transcripts: [] as unknown[],
+  speakerNames: {} as Record<string, string>,
+  detectedProfiles: [] as unknown[],
+  transcriptionBackend: null as string | null,
 };
 
 const mockStartSession = vi.fn();

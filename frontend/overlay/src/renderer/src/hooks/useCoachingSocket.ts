@@ -242,8 +242,15 @@ export function useCoachingSocket(): CoachingSocketState & CoachingSocketActions
       } else if (msg.type === "speaker_identified") {
         const sid = msg.speaker_id as string;
         const name = msg.name as string;
+        const conf = typeof msg.confidence === "number" ? msg.confidence : undefined;
         if (sid && name) {
           setSpeakerNames(prev => ({ ...prev, [sid]: name }));
+          // Update confidence on detected profile so the UI can show/hide the "?" badge
+          if (conf !== undefined) {
+            setDetectedProfiles(prev =>
+              prev.map(p => p.speaker_id === sid ? { ...p, confidence: conf } : p)
+            );
+          }
         }
       } else if (msg.type === "profile_detected") {
         const profile: DetectedProfile = {

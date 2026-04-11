@@ -106,20 +106,17 @@ Deferred work captured from /plan-ceo-review (2026-03-25, SCOPE EXPANSION mode) 
 **Priority:** P1
 **Context:** Deferred from Speaker ID Phase 1 /autoplan CEO review (2026-04-10). Critical to confirm the nova-2 → nova-3 upgrade doesn't regress.
 
-### Manual speaker tagging fallback UX
-**What:** Add a UI for users to manually correct speaker names when LLM resolution is wrong or slow. Currently the only correction path is the `confirm_speaker` WebSocket message.
-**Priority:** P2
-**Context:** Deferred from Speaker ID research doc Phase 2 (2026-04-09).
+### ~~Manual speaker tagging fallback UX~~ ✅ COMPLETE
+**Completed (2026-04-11):** Tap-to-edit popover on live session participant pills with Save/Cancel/Escape flow. Gold "?" confidence badge when resolver confidence < 0.7, with hysteresis deadband (0.8 to clear). Confidence-based prompt suppression uses "the current speaker" when confidence < 0.7.
+**Context:** Implemented in Speaker ID Phase 2 (feat/coaching-quality-cache-rank-rotate).
 
-### Adaptive resolver scheduling
-**What:** Dynamically adjust resolver interval based on meeting activity. Faster during introductions (first 2 min), slower once all speakers are locked.
-**Priority:** P2
-**Context:** Deferred from Speaker ID research doc Phase 3 (2026-04-09).
+### ~~Adaptive resolver scheduling~~ ✅ COMPLETE
+**Completed (2026-04-11):** 10s during intro phase (0-120s), 15s default, 60s when all speakers locked. Resolver skips API calls when no new utterances arrive.
+**Context:** Implemented in Speaker ID Phase 2 (feat/coaching-quality-cache-rank-rotate).
 
-### Speaker ID Phase 2 decision gate
-**What:** Evaluate Phase 1 results after 60 days. If resolver still < 85% accuracy, proceed to Phase 2 (WeSpeaker embeddings, voiceprint DB). If >= 85%, Phase 2 is optional.
-**Priority:** P2
-**Context:** Deferred from Speaker ID research doc (2026-04-09). Decision gate at 60 days post-Phase-1.
+### ~~Speaker ID Phase 2 decision gate~~ ✅ COMPLETE
+**Completed (2026-04-11):** Resolver accuracy metrics (total resolutions, user corrections, time to first resolution) tracked per session. WeSpeaker ECAPA-TDNN voiceprint extraction + storage + confidence boost shipped alongside, so the decision gate is moot. Voiceprint centroids persist cross-session via EMA updates.
+**Context:** Implemented in Speaker ID Phase 2 (feat/coaching-quality-cache-rank-rotate).
 
 ---
 

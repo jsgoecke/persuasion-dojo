@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Awaitable, Callable
@@ -111,12 +112,29 @@ class SpeakerResolver:
         self._running = False
         self._last_resolved_len = 0  # track transcript length to skip no-op cycles
 
+        # Adaptive scheduling state
+        self._start_time: float | None = None  # monotonic time of first utterance
+
+        # Resolver accuracy metrics (written at session end)
+        self._metrics = {
+            "total_resolutions": 0,
+            "user_corrections": 0,
+            "time_to_first_resolution": None,
+            "locked_at_end": 0,
+        }
+
+        # Voiceprint boost: set via set_voiceprint_data() from main.py
+        self._voiceprint_similarities: dict[str, tuple[str, float]] = {}
+        # speaker_id → (matched_name, cosine_similarity)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def add_utterance(self, speaker_id: str, text: str) -> None:
         """Buffer a transcribed utterance for the next resolution cycle."""
+        if self._start_time is None:
+            self._start_time = time.monotonic()
         self._transcript.append({"speaker": speaker_id, "text": text})
 
     async def start(self) -> None:
@@ -143,14 +161,51 @@ class SpeakerResolver:
 
     def set_confirmed_name(self, speaker_id: str, name: str) -> None:
         """User confirmed or edited a name — lock it permanently."""
+        # Track corrections (different name than current mapping)
+        existing = self._mappings.get(speaker_id)
+        if existing is not None and existing != name:
+            self._metrics["user_corrections"] += 1
         self._mappings[speaker_id] = name
         self._confidences[speaker_id] = 1.0
         self._locked.add(speaker_id)
+
+    def set_voiceprint_match(
+        self, speaker_id: str, matched_name: str, similarity: float,
+    ) -> None:
+        """Inject a voiceprint match for use in the next resolution cycle.
+
+        Called from main.py when a speaker's embedding matches a known
+        participant's voiceprint centroid with similarity > 0.7.
+        """
+        self._voiceprint_similarities[speaker_id] = (matched_name, similarity)
 
     @property
     def mappings(self) -> dict[str, str]:
         """Current speaker_id → name mappings (copy)."""
         return dict(self._mappings)
+
+    @property
+    def confidences(self) -> dict[str, float]:
+        """Current speaker_id → confidence mappings (copy)."""
+        return dict(self._confidences)
+
+    @property
+    def metrics(self) -> dict:
+        """Resolver accuracy metrics for this session (copy)."""
+        m = dict(self._metrics)
+        m["locked_at_end"] = len(self._locked)
+        return m
+
+    def _current_interval(self) -> float:
+        """Adaptive interval based on meeting phase."""
+        if self._start_time is None:
+            return self._interval
+        elapsed = time.monotonic() - self._start_time
+        if elapsed < 120:
+            return 10.0  # Intro phase: aggressive
+        if self._mappings and all(sid in self._locked for sid in self._mappings):
+            return 60.0  # All locked: coast
+        return self._interval  # Default: 15s
 
     # ------------------------------------------------------------------
     # DB pre-seeding
@@ -209,9 +264,9 @@ class SpeakerResolver:
     # ------------------------------------------------------------------
 
     async def _loop(self) -> None:
-        """Run resolution every interval_s while active."""
+        """Run resolution at adaptive intervals while active."""
         while self._running:
-            await asyncio.sleep(self._interval)
+            await asyncio.sleep(self._current_interval())
             if not self._running:
                 break
             # Need enough context for meaningful inference
@@ -332,8 +387,29 @@ class SpeakerResolver:
                     if confidence <= existing_confidence:
                         continue
 
+            # Voiceprint confidence boost: if a voiceprint match agrees with
+            # the LLM mapping, boost confidence by 0.15 (capped at 0.95).
+            vp_match = self._voiceprint_similarities.get(speaker_id)
+            if vp_match is not None:
+                vp_name, vp_sim = vp_match
+                if vp_name == name and vp_sim > 0.7:
+                    old_conf = confidence
+                    # F11: Cap below lock threshold to prevent auto-lock from voiceprint alone
+                    confidence = min(confidence + 0.15, self._lock_threshold - 0.01)
+                    logger.info(
+                        "Voiceprint boost: %s %.2f → %.2f (sim=%.2f)",
+                        name, old_conf, confidence, vp_sim,
+                    )
+
             self._mappings[speaker_id] = name
             self._confidences[speaker_id] = confidence
+
+            # Track metrics
+            self._metrics["total_resolutions"] += 1
+            if self._metrics["time_to_first_resolution"] is None and self._start_time is not None:
+                self._metrics["time_to_first_resolution"] = round(
+                    time.monotonic() - self._start_time, 1
+                )
 
             # Lock high-confidence mappings
             if confidence >= self._lock_threshold:

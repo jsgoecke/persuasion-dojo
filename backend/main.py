@@ -191,11 +191,27 @@ class SessionPipeline:
         # Each entry: {"speaker": str, "text": str, "start": float, "end": float}
         self.utterances: list[dict[str, Any]] = []
 
+        # Audio ring buffers for voiceprint extraction (5 min at 50ms chunks)
+        # Separate buffers for mic vs system audio (F9: only system used for voiceprints)
+        self._audio_buffer_system: collections.deque[tuple[float, bytes]] = collections.deque(maxlen=6000)
+        self._audio_buffer_mic: collections.deque[tuple[float, bytes]] = collections.deque(maxlen=6000)
+        self._audio_intro_buffer: list[tuple[float, bytes]] = []  # first 30s system audio pinned
+        self._audio_start_time: float | None = None
+        self._audio_intro_full = False
+
         # Utterance dedup: last stored text per speaker (normalized)
         self._last_utterance: dict[str, str] = {}
 
         # User's profile snapshot — loaded at session start for coaching context
         self.user_profile: ProfileSnapshot | None = None
+
+        # Voiceprint state (F4: explicit fields, not monkey-patched)
+        self.resolver: "SpeakerResolver | None" = None
+        self.vp_extractor: Any = None  # VoiceprintExtractor or None
+        self.vp_known: dict[str, tuple[Any, int]] = {}  # name → (centroid, sessions)
+        self.vp_embeddings: dict[str, list] = {}  # speaker_id → list of np.ndarray
+        self._vp_max_per_speaker: int = 20  # cap embeddings per speaker
+        self._vp_tasks: set[asyncio.Task] = set()  # track background voiceprint tasks
 
     async def process_utterance(
         self,
@@ -249,6 +265,49 @@ class SessionPipeline:
             user_is_speaking=user_is_speaking,
             recent_transcript=recent,
         )
+
+    def buffer_audio(self, chunk: bytes, *, is_mic: bool = False) -> None:
+        """Buffer a raw PCM chunk for voiceprint extraction.
+
+        Args:
+            chunk: Raw 16-bit PCM bytes.
+            is_mic: True for mic stream, False for system stream (F9).
+        """
+        now = time.monotonic()
+        if self._audio_start_time is None:
+            self._audio_start_time = now
+        if is_mic:
+            self._audio_buffer_mic.append((now, chunk))
+        else:
+            self._audio_buffer_system.append((now, chunk))
+            # Pin first 30s of system audio in intro buffer (most valuable for voiceprints)
+            if not self._audio_intro_full:
+                self._audio_intro_buffer.append((now, chunk))
+                if now - self._audio_start_time >= 30.0:
+                    self._audio_intro_full = True
+
+    def extract_audio_segment(self, start_s: float, end_s: float) -> bytes | None:
+        """Extract system-audio PCM bytes for a time range (session-relative seconds).
+
+        Uses system audio only (counterpart voices). Deduplicates intro + rolling
+        buffer overlap by tracking timestamps (F3).
+        """
+        if not self._audio_buffer_system or self._audio_start_time is None:
+            return None
+        abs_start = self._audio_start_time + start_s
+        abs_end = self._audio_start_time + end_s
+        # Collect from intro buffer (pinned, never evicted)
+        seen_ts: set[float] = set()
+        segments: list[bytes] = []
+        for ts, chunk in self._audio_intro_buffer:
+            if abs_start <= ts <= abs_end:
+                segments.append(chunk)
+                seen_ts.add(ts)
+        # Then collect from rolling buffer, skipping already-seen timestamps (F3)
+        for ts, chunk in self._audio_buffer_system:
+            if abs_start <= ts <= abs_end and ts not in seen_ts:
+                segments.append(chunk)
+        return b"".join(segments) if segments else None
 
     def compute_scores(self) -> dict[str, Any]:
         """
@@ -1440,10 +1499,53 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
             merged_names.append(db_name)
             _seen_lower.add(db_name.lower())
 
+    # ── Voiceprint extractor (optional) ─────────────────────────────
+    try:
+        from backend.speaker_embeddings import (
+            VoiceprintExtractor, centroid_from_json, centroid_to_json,
+        )
+        _vp_extractor = VoiceprintExtractor()
+    except Exception:
+        logger.debug("VoiceprintExtractor init failed", exc_info=True)
+        _vp_extractor = None
+
+    # Load known voiceprints from DB for cross-session recognition
+    _known_voiceprints: dict[str, tuple["np.ndarray", int]] = {}  # name → (centroid, sessions)
+    if _vp_extractor and _vp_extractor.available:
+        try:
+            async with get_db_session() as db:
+                from backend.models import Participant as _P
+                vp_result = await db.execute(
+                    select(_P).where(
+                        _P.user_id == _DEFAULT_USER_ID,
+                        _P.voiceprint_centroid.is_not(None),
+                    )
+                )
+                for p in vp_result.scalars():
+                    try:
+                        _known_voiceprints[p.name] = (
+                            centroid_from_json(p.voiceprint_centroid),
+                            p.voiceprint_sessions,
+                        )
+                    except Exception:
+                        pass
+                if _known_voiceprints:
+                    logger.info("Loaded %d voiceprints from DB", len(_known_voiceprints))
+        except Exception:
+            logger.debug("Failed to load voiceprints from DB", exc_info=True)
+
+    # Track latest embeddings per speaker for session-end centroid update
+    _speaker_embeddings: dict[str, list] = {}  # speaker_id → list of np.ndarray
+
     async def _persist_speaker_mapping(
         speaker_id: str, name: str, confidence: float,
     ) -> None:
-        """Persist resolved speaker name to Participant DB each cycle."""
+        """Persist resolved speaker name to Participant DB and update coaching engine."""
+        # Update coaching engine so prompts use the latest resolved name.
+        # Confidence < 0.7 causes the engine to suppress the name in prompts
+        # ("the current speaker" instead of a potentially wrong name).
+        engine.update_speaker_name(speaker_id, name, confidence)
+
         try:
             async with get_db_session() as db:
                 from backend.identity import resolve_speaker
@@ -1468,8 +1570,11 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         ws_send=ws.send_json,
         on_mapping_updated=_persist_speaker_mapping,
     )
-    # Stash resolver on pipeline for session-end access
-    pipeline.resolver = resolver  # type: ignore[attr-defined]
+    # Set resolver and voiceprint state on pipeline (explicit fields, F4)
+    pipeline.resolver = resolver
+    pipeline.vp_extractor = _vp_extractor
+    pipeline.vp_known = _known_voiceprints
+    pipeline.vp_embeddings = _speaker_embeddings
 
     # Track which speakers have been notified to the frontend as detected profiles
     _notified_profiles: set[str] = set()
@@ -1511,6 +1616,46 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         # Feed to speaker resolver for name inference
         if is_final and text.strip():
             resolver.add_utterance(prefixed_id, text)
+
+            # ── Voiceprint: extract embedding from long segments (F1: background task) ──
+            if (_vp_extractor and _vp_extractor.available
+                    and (end_s - start_s) >= 5.0):
+                _vp_speaker = prefixed_id
+                _vp_start = start_s
+                _vp_end = end_s
+
+                async def _extract_voiceprint(
+                    sid: str = _vp_speaker, s: float = _vp_start, e: float = _vp_end,
+                ) -> None:
+                    pcm = pipeline.extract_audio_segment(s, e)
+                    if not pcm or len(pcm) < 5 * 16000 * 2:  # 5s @ 16kHz 16-bit
+                        return
+                    # Run CPU-bound extraction in thread pool (F1)
+                    loop = asyncio.get_running_loop()
+                    embed = await loop.run_in_executor(
+                        None, _vp_extractor.extract_embedding, pcm,
+                    )
+                    if embed is None:
+                        return
+                    embeds = _speaker_embeddings.setdefault(sid, [])
+                    embeds.append(embed)
+                    # Cap per-speaker embeddings (perf guard)
+                    if len(embeds) > pipeline._vp_max_per_speaker:
+                        del embeds[0]
+                    # Find best-match voiceprint (F5: max similarity, not first)
+                    best_name: str | None = None
+                    best_sim = 0.0
+                    for vp_name, (centroid, _) in _known_voiceprints.items():
+                        sim = _vp_extractor.cosine_similarity(embed, centroid)
+                        if sim > 0.7 and sim > best_sim:
+                            best_sim = sim
+                            best_name = vp_name
+                    if best_name is not None:
+                        resolver.set_voiceprint_match(sid, best_name, best_sim)
+
+                task = asyncio.create_task(_extract_voiceprint())
+                pipeline._vp_tasks.add(task)
+                task.add_done_callback(pipeline._vp_tasks.discard)
 
         # Notify frontend when a new profile is first detected
         if is_final and text.strip() and prefixed_id not in _notified_profiles:
@@ -1593,8 +1738,12 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         _connected = [False]
         _error_sent = [False]
         _retry_after = [0.0]
+        _dg_connect_time: list[float | None] = [None]  # F2: monotonic time of DG connect
 
         async def _on_audio_chunk(data: bytes) -> None:
+            # ── Buffer audio for voiceprint extraction (F9: separate streams) ──
+            pipeline.buffer_audio(data, is_mic=is_mic)
+
             # ── Audio level meter (mic stream only) ──────
             if is_mic:
                 import struct as _struct, math as _math
@@ -1632,6 +1781,16 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
                     _connected[0] = True
                     _error_sent[0] = False
                     _retry_after[0] = 0.0
+                    _dg_connect_time[0] = time.monotonic()  # F2: record for clock sync
+                    # Validate clock offset: DG timestamps start at 0 from connect time.
+                    # If audio_start_time was set before DG connected, log the offset.
+                    if pipeline._audio_start_time is not None:
+                        offset = _dg_connect_time[0] - pipeline._audio_start_time
+                        if offset > 0.5:
+                            logger.warning(
+                                "DG %s connected %.1fs after audio start — word timestamps may drift",
+                                label, offset,
+                            )
                     logger.info("Deepgram %s connected on first audio chunk", label)
                 except Exception as exc:
                     logger.error("Deepgram %s connect failed: %s", label, exc)
@@ -1810,9 +1969,25 @@ async def _handle_message(
         name = msg.get("name", "")
         if speaker_id and name:
             # Lock the name in the resolver so it won't change
-            _resolver = getattr(pipeline, "resolver", None)
-            if _resolver:
-                _resolver.set_confirmed_name(speaker_id, name)
+            if pipeline.resolver:
+                pipeline.resolver.set_confirmed_name(speaker_id, name)
+            # Update coaching engine with confirmed name at full confidence
+            pipeline.engine.update_speaker_name(speaker_id, name, 1.0)
+            # F10: Persist confirmed name to DB
+            try:
+                async with get_db_session() as _db:
+                    from backend.identity import resolve_speaker as _resolve_spk
+                    _existing = await _resolve_spk(_db, _DEFAULT_USER_ID, name)
+                    if _existing is not None:
+                        _existing.updated_at = datetime.now(timezone.utc)
+                    else:
+                        _db.add(Participant(
+                            id=str(uuid.uuid4()),
+                            user_id=_DEFAULT_USER_ID,
+                            name=name,
+                        ))
+            except Exception:
+                logger.warning("confirm_profile: DB persist failed for %s", name)
 
     elif msg_type == "prompt_feedback":
         prompt_id = msg.get("prompt_id", "")
@@ -1977,7 +2152,7 @@ async def _persist_participant_classifications(
         # Determine display name
         name = ""
         # Check if resolver has a confirmed/inferred name
-        if hasattr(pipeline, "resolver") and pipeline.resolver:
+        if pipeline.resolver:
             resolved = pipeline.resolver.resolve(speaker_id)
             if resolved != speaker_id:
                 name = resolved
@@ -2156,6 +2331,11 @@ async def _handle_session_end(
                 row.obs_utterance_count = obs.utterance_count
                 row.obs_confidence = obs.obs_confidence
 
+                # Write speaker resolver accuracy metrics
+                _resolver = getattr(pipeline, "resolver", None)
+                if _resolver is not None:
+                    row.resolver_metrics = json.dumps(_resolver.metrics)
+
                 if obs.utterance_count > 0:
                     user = await db.get(User, pipeline.user_id)
                     if user is not None:
@@ -2211,6 +2391,55 @@ async def _handle_session_end(
                 await _persist_participant_classifications(
                     db, pipeline, row.context or "unknown"
                 )
+
+                # ── Wait for in-flight voiceprint tasks before reading embeddings ──
+                if pipeline._vp_tasks:
+                    await asyncio.gather(*pipeline._vp_tasks, return_exceptions=True)
+
+                # ── Voiceprint centroid update ───────────────────────
+                _vp_ext = pipeline.vp_extractor
+                _vp_embeds = pipeline.vp_embeddings
+                if _vp_ext and _vp_embeds and getattr(_vp_ext, "available", False):
+                    try:
+                        from backend.speaker_embeddings import (
+                            centroid_to_json, centroid_from_json,
+                        )
+                        _resolver = pipeline.resolver
+                        for sid, embeds in _vp_embeds.items():
+                            if not embeds:
+                                continue
+                            # Only update for confirmed/locked speakers
+                            resolved_name = _resolver.resolve(sid) if _resolver else sid
+                            if resolved_name == sid:
+                                continue  # unresolved, skip
+                            # Compute session centroid with outlier rejection
+                            session_centroid = _vp_ext.compute_speaker_centroid(
+                                embeds, drop_outliers=2 if len(embeds) > 4 else 0,
+                            )
+                            if session_centroid is None:
+                                continue
+                            # Find participant row by name
+                            from backend.identity import resolve_speaker as _rs
+                            participant = await _rs(db, _DEFAULT_USER_ID, resolved_name)
+                            if participant is None:
+                                continue
+                            if participant.voiceprint_centroid:
+                                # EMA update existing centroid
+                                old = centroid_from_json(participant.voiceprint_centroid)
+                                new = _vp_ext.update_centroid(
+                                    old, session_centroid, participant.voiceprint_sessions,
+                                )
+                                participant.voiceprint_centroid = centroid_to_json(new)
+                            else:
+                                participant.voiceprint_centroid = centroid_to_json(session_centroid)
+                            participant.voiceprint_sessions += 1
+                            participant.voiceprint_updated_at = datetime.now(timezone.utc)
+                            logger.info(
+                                "Voiceprint updated: %s (sessions=%d, embeds=%d)",
+                                resolved_name, participant.voiceprint_sessions, len(embeds),
+                            )
+                    except Exception:
+                        logger.debug("Voiceprint persistence failed", exc_info=True)
 
                 # ── Aggregate coaching effectiveness ───────────────────
                 user_arch = pipeline.engine.user_archetype
@@ -2309,7 +2538,7 @@ async def _handle_session_end(
             cls = pipeline.profiler.get_classification(sid)
             if cls:
                 resolved_name = ""
-                if hasattr(pipeline, "resolver") and pipeline.resolver:
+                if pipeline.resolver:
                     resolved_name = pipeline.resolver.resolve(sid)
                 _ended_participants.append({
                     "speaker_id": sid,
@@ -2349,7 +2578,7 @@ async def _handle_session_end(
             cls = pipeline.profiler.get_classification(sid)
             if cls:
                 resolved_name = ""
-                if hasattr(pipeline, "resolver") and pipeline.resolver:
+                if pipeline.resolver:
                     resolved_name = pipeline.resolver.resolve(sid)
                 evidence = pipeline.profiler.get_key_evidence(sid, top_n=3)
                 elm_episodes = pipeline.elm_detector.get_episode_history(sid)

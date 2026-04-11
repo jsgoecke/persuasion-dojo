@@ -835,11 +835,37 @@ class CoachingEngine:
     # Speaker name + archetype resolution
     # ------------------------------------------------------------------
 
+    # Minimum resolver confidence to use a speaker's name in coaching prompts.
+    # Below this, prompts say "the current speaker" to avoid coaching with a wrong name.
+    _NAME_CONFIDENCE_FLOOR = 0.7
+
+    def update_speaker_name(
+        self, speaker_id: str, name: str, confidence: float,
+    ) -> None:
+        """Update a participant's resolved name and resolver confidence.
+
+        Called by the speaker resolver callback so coaching prompts use
+        the latest name without the engine reaching into resolver internals.
+        """
+        for p in self._participants:
+            if p.get("speaker_id") == speaker_id:
+                p["name"] = name
+                p["resolver_confidence"] = confidence
+                return
+        # Speaker not yet in participants list — add a stub entry
+        self._participants.append({
+            "speaker_id": speaker_id,
+            "name": name,
+            "resolver_confidence": confidence,
+        })
+
     def _resolve_speaker_name(self, speaker_id: str) -> str:
         """
         Resolve a speaker_id to a human name from the participants list.
 
         Tries: (1) direct speaker_id match, (2) index-based lookup.
+        Returns "" if resolver confidence is below the threshold (prompts
+        will use "the current speaker" instead of a potentially wrong name).
         Returns "" if no name can be resolved.
         """
         if not self._participants:
@@ -847,6 +873,10 @@ class CoachingEngine:
         # Direct match by speaker_id field
         for p in self._participants:
             if p.get("speaker_id") == speaker_id:
+                # Suppress name when resolver confidence is too low
+                rc = p.get("resolver_confidence")
+                if rc is not None and rc < self._NAME_CONFIDENCE_FLOOR:
+                    return ""
                 return p.get("name", "")
         # Index-based matching
         try:
@@ -855,7 +885,11 @@ class CoachingEngine:
             else:
                 idx = int(speaker_id.replace("speaker_", "")) - 1
             if 0 <= idx < len(self._participants):
-                return self._participants[idx].get("name", "")
+                p = self._participants[idx]
+                rc = p.get("resolver_confidence")
+                if rc is not None and rc < self._NAME_CONFIDENCE_FLOOR:
+                    return ""
+                return p.get("name", "")
         except (ValueError, IndexError):
             pass
         return ""

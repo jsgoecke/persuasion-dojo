@@ -210,6 +210,11 @@ class Participant(Base):
     obs_sessions: Mapped[int] = mapped_column(Integer, default=0)
     obs_archetype: Mapped[str | None] = mapped_column(String(50))  # derived from axes
 
+    # Voiceprint (WeSpeaker ECAPA-TDNN, 256-dim embedding centroid)
+    voiceprint_centroid: Mapped[str | None] = mapped_column(Text)   # JSON array of floats
+    voiceprint_sessions: Mapped[int] = mapped_column(Integer, default=0)
+    voiceprint_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     user: Mapped[User] = relationship(back_populates="participants")
     sessions: Mapped[list[MeetingSession]] = relationship(
         secondary=session_participants, back_populates="participants"
@@ -471,6 +476,9 @@ class MeetingSession(Base):
 
     # Post-session Opus debrief (populated in background after session ends)
     debrief_text: Mapped[str | None] = mapped_column(String(4000))
+
+    # Speaker resolver accuracy metrics (JSON, written at session end)
+    resolver_metrics: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped[User] = relationship(back_populates="sessions")
     prompts: Mapped[list["Prompt"]] = relationship(

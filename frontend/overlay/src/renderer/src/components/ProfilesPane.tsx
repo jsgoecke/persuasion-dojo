@@ -140,7 +140,7 @@ function ProfileCard({
           alignItems: "center",
           gap: 12,
           flex: 1,
-          padding: "12px 14px",
+          padding: badge ? "12px 72px 12px 14px" : "12px 14px",
           background: "var(--bg-card)",
           border: "1px solid var(--border-subtle)",
           borderRadius: 10,
@@ -220,7 +220,12 @@ function ProfileCard({
               fontSize: 12,
               fontWeight: 600,
               color,
-              flexShrink: 0,
+              flexShrink: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              maxWidth: 120,
             }}
           >
             {profile.archetype}

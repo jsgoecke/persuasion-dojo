@@ -43,6 +43,25 @@ _MIN_PER_CONTEXT = 5  # protect at least N bullets per context type during cap e
 _MAX_CONTEXT_BULLETS = 15
 _MAX_CONTEXT_WORDS = 500
 
+# Reject Reflector bullets that contain internal metrics in their content
+_BULLET_METRIC_LEAK = re.compile(
+    r"(?:"
+    r"\d+/100"                          # "75/100"
+    r"|\d+\.\d{2,}"                     # "0.309", "0.075"
+    r"|ratio\s*[:=]\s*\d"              # "ratio: 0.0"
+    r"|score\s*[:=]\s*\d"             # "score: 75"
+    r"|convergence\s+\d"              # "convergence 0.075"
+    r"|persuasion\s+\d"               # "persuasion 42"
+    r"|timing\s+\d"                    # "timing 0.0"
+    r"|floor|threshold|depleted"       # internal jargon
+    r"|zero.utterance"                 # "zero-utterance session"
+    r"|talk.time.ratio"               # "talk time ratio"
+    r"|peripheral.route|central.route" # ELM jargon
+    r"|ELM\s+(?:insight|state|model)" # ELM framework
+    r")",
+    re.IGNORECASE,
+)
+
 # Relevance scoring weights
 _W_NET_HELPFUL = 0.5
 _W_NET_HELPFUL_CAP = 3.0
@@ -354,25 +373,15 @@ def _filter_for_haiku(text: str) -> str:
     Strip scoring metrics, session diagnostics, and markdown tables
     from playbook text before sending to Haiku.
 
-    Circuit breaker: if filtered result < 20 words, return original
-    (aggressive filtering may have removed too much).
+    Returns empty string if all content is metrics — empty context is
+    better than leaking internal data into user-facing prompts.
     """
-    original_word_count = len(text.split())
-
     # Strip metric lines
     filtered = _METRIC_PATTERNS.sub("", text)
     # Strip markdown table rows
     filtered = _TABLE_ROW_PATTERN.sub("", filtered)
     # Clean up excessive blank lines
     filtered = re.sub(r"\n{3,}", "\n\n", filtered).strip()
-
-    # Circuit breaker
-    if len(filtered.split()) < 20 and original_word_count >= 20:
-        logger.debug(
-            "Playbook filter too aggressive: %d → %d words, returning original",
-            original_word_count, len(filtered.split()),
-        )
-        return text
 
     return filtered
 
@@ -774,6 +783,13 @@ Rules:
 - For REINFORCE: reference the bullet_id of the bullet being confirmed
 - For CONTRADICT: reference the bullet_id and explain what conflicts
 - Prefer updating existing bullets over creating near-duplicates
+- CRITICAL: Bullet content must be plain English coaching advice that a user can act on. \
+NEVER include scores, numbers, ratios, percentages, metrics, thresholds, or internal \
+system data in bullet content. Bad: "Persuasion 42 and convergence 0.309 at zero \
+utterances". Good: "You tend to stay silent in meetings — speak in the first 90 seconds, \
+even just to ask a clarifying question."
+- Write bullets as if you are a coach speaking directly to the user. No jargon, \
+no academic terms (ELM, peripheral route, central route), no framework labels.
 - Output ONLY the JSON array. No explanation, no markdown fences."""
 
 
@@ -845,7 +861,16 @@ async def reflector_extract(
             logger.warning("Reflector returned non-list JSON: %s", type(deltas))
             return []
 
-        return deltas[:_MAX_DELTAS_PER_SESSION]
+        # Filter out any bullets that leak internal metrics into content
+        clean_deltas = []
+        for d in deltas[:_MAX_DELTAS_PER_SESSION]:
+            content = d.get("content", "")
+            if _BULLET_METRIC_LEAK.search(content):
+                logger.info("Reflector: rejected bullet with metric leak: %s", content[:80])
+                continue
+            clean_deltas.append(d)
+
+        return clean_deltas
 
     except json.JSONDecodeError as exc:
         logger.warning("Reflector returned invalid JSON: %s", exc)

@@ -962,7 +962,7 @@ async def coach_text(body: TextCoachRequest) -> TextCoachResponse:
         user_msg = f"Draft:\n{user_msg}"
 
     try:
-        api_key = _load_settings().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _load_settings().get("anthropic_api_key", "")
         client = AsyncAnthropic(api_key=api_key)
         response = await client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -1307,7 +1307,8 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     coaching_ctx = _session_coaching_context.pop(session_id, {})
 
     # ── Pre-flight: check Deepgram key (soft gate in auto/local mode) ──
-    deepgram_key = _load_settings().get("deepgram_api_key") or os.environ.get("DEEPGRAM_API_KEY", "")
+    # .env is the source of truth; settings.json is a UI-set override
+    deepgram_key = os.environ.get("DEEPGRAM_API_KEY", "") or _load_settings().get("deepgram_api_key", "")
     transcription_mode: TranscriptionMode = coaching_ctx.get("transcription_mode", "auto")  # type: ignore[assignment]
     if transcription_mode not in ("auto", "cloud", "local"):
         transcription_mode = "auto"
@@ -2397,7 +2398,7 @@ async def _generate_session_debrief(
     Writes the result to MeetingSession.debrief_text.  Silently no-ops if the
     API key is missing or the call fails — the debrief is non-critical.
     """
-    api_key = _load_settings().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _load_settings().get("anthropic_api_key", "")
     if not api_key:
         return
 
@@ -2583,7 +2584,7 @@ async def _update_coaching_playbook(
             "prompt_results": prompt_results,
         }
 
-        api_key = _load_settings().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _load_settings().get("anthropic_api_key", "")
 
         # ACE pipeline: Reflector → Curator → Bullet Store
         async with get_db_session() as db:
@@ -2733,7 +2734,7 @@ async def submit_assessment(body: SubmitAssessmentRequest) -> AssessmentResultRe
 
     micro = None
     if body.micro_argument and body.micro_argument.strip():
-        api_key = _load_settings().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _load_settings().get("anthropic_api_key", "")
         if api_key:
             client = _anthropic.Anthropic(api_key=api_key)
             try:
@@ -2970,7 +2971,7 @@ async def retro_upload(
 
         try:
             importer = RetroImporter(
-                api_key=_load_settings().get("deepgram_api_key") or os.environ.get("DEEPGRAM_API_KEY", ""),
+                api_key=os.environ.get("DEEPGRAM_API_KEY", "") or _load_settings().get("deepgram_api_key", ""),
                 on_utterance=on_utterance,
                 on_progress=on_progress,
             )
@@ -3254,7 +3255,7 @@ async def _generate_retro_debrief(
     scores: dict,
 ) -> None:
     """Generate per-participant strategic debrief for retro analysis."""
-    api_key = _load_settings().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _load_settings().get("anthropic_api_key", "")
     if not api_key:
         job["debrief"] = "Set an Anthropic API key in Settings to enable coaching debrief."
         return
@@ -3400,7 +3401,7 @@ async def _update_retro_coaching_bullets(
             "prompt_results": [],  # No live prompts in retro analysis
         }
 
-        api_key = _load_settings().get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _load_settings().get("anthropic_api_key", "")
 
         async with get_db_session() as db:
             await update_coaching_bullets(

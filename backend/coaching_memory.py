@@ -38,9 +38,59 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Playbook filter — strip scoring metrics and tables before sending to Haiku
+# ---------------------------------------------------------------------------
+
+_METRIC_PATTERNS = re.compile(
+    r"(?m)^.*(?:"
+    r"\d+/100"                            # scoring metrics like "75/100"
+    r"|\d+\.\d+\s*%"                      # percentages like "34.5%"
+    r"|ratio:\s*\d"                        # "ratio: 0.0"
+    r"|score[s]?:\s*\d"                    # "score: 75" / "Scores: 30"
+    r"|convergence\s+\d"                   # "convergence 0.075"
+    r"|consecutive.*session"              # "7th consecutive session"
+    r"|sessions?\s+observed"              # "sessions observed"
+    r"|zero-utterance"                    # "zero-utterance session"
+    r"|dropped\s+sharply"                 # "dropped sharply"
+    r"|talk\s+time\s+ratio"              # "talk time ratio"
+    r"|persuasion\s+score"               # "persuasion score"
+    r"|timing:\s*\d"                      # "Timing: 0/100"
+    r"|ego\s+safety:\s*\d"               # "Ego Safety: 100/100"
+    r"|running\s+avg"                     # "Running Avg"
+    r"|0\.\d+\s*\("                       # "0.0 (2/2 sessions)"
+    r"|peripheral\s+(?:route|processing)" # ELM jargon
+    r"|central[\s-]+route"               # ELM jargon
+    r"|ELM\s+(?:insight|state|model)"    # ELM framework references
+    r"|coaching\s+system\s+(?:must|should|will)"  # internal system instructions
+    r"|prompt\s+data"                    # internal system references
+    r").*$",
+    re.IGNORECASE,
+)
+
+_EMPTY_SECTION_PATTERN = re.compile(
+    r"(?m)^##+ [^\n]+\n(?=\s*(?:##|\Z))"  # heading followed by nothing/another heading
+)
+
+_TABLE_ROW_PATTERN = re.compile(r"(?m)^\s*\|.*\|.*\|\s*$")
+
+
+def _filter_for_haiku(text: str) -> str:
+    """Strip scoring metrics, tables, and internal diagnostics from playbook text."""
+    filtered = _METRIC_PATTERNS.sub("", text)
+    filtered = _TABLE_ROW_PATTERN.sub("", filtered)
+    filtered = _EMPTY_SECTION_PATTERN.sub("", filtered)
+    # Remove orphaned bullet points (just bold label with no content after colon)
+    filtered = re.sub(r"(?m)^-\s+\*\*[^*]+\*\*\s*$\n?", "", filtered)
+    filtered = re.sub(r"\n{3,}", "\n\n", filtered).strip()
+
+    return filtered
+
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -132,10 +182,17 @@ def get_coaching_context(
         return ""
 
     context = "\n\n".join(sections)
+
+    # Strip scoring metrics and tables so Haiku never parrots internal data
+    context = _filter_for_haiku(context)
+
     # Cap at ~500 words to avoid bloating Haiku's prompt
     words = context.split()
     if len(words) > 500:
         context = " ".join(words[:500]) + "…"
+
+    if not context.strip():
+        return ""
 
     return f"YOUR COACHING PLAYBOOK (learned from prior sessions):\n{context}"
 

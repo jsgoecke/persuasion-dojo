@@ -260,18 +260,16 @@ class TestPlaybookFiltering:
         assert "Anchor your next" in result
         assert "Acknowledge their" in result
 
-    def test_circuit_breaker_returns_original(self):
-        """When filtering removes too much, return original text."""
-        # All lines are metric-like, so filtering removes everything.
-        # But original has >= 20 words, so circuit breaker returns original.
+    def test_all_metrics_stripped_returns_empty(self):
+        """When all content is metrics, return empty rather than leaking."""
         text = (
             "Persuasion Score: 75/100 and that is the final "
             "score of the session observed over many sessions with "
             "this particular participant in a 1:1 context observed."
         )
         result = _filter_for_haiku(text)
-        # Circuit breaker: filtered result < 20 words, original >= 20
-        assert len(result.split()) >= 20
+        # All-metric content stripped completely — empty is better than leaking
+        assert "75/100" not in result
 
 
 # ===========================================================================
@@ -829,3 +827,108 @@ class TestReflectorLayerField:
             )
             bullet = result.scalar_one()
             assert bullet.layer == "audience"
+
+
+# ===========================================================================
+# 14. Reflector metric leak rejection (6 tests)
+# ===========================================================================
+
+class TestReflectorMetricLeakRejection:
+    """Verify contaminated Reflector output never reaches the bullet store."""
+
+    def test_reflector_prompt_bans_metrics_in_content(self):
+        from backend.coaching_bullets import _REFLECTOR_PROMPT
+        assert "NEVER include scores" in _REFLECTOR_PROMPT
+        assert "ratios" in _REFLECTOR_PROMPT
+        assert "plain english" in _REFLECTOR_PROMPT.lower()
+
+    def test_leak_regex_catches_score_fractions(self):
+        from backend.coaching_bullets import _BULLET_METRIC_LEAK
+        assert _BULLET_METRIC_LEAK.search("Persuasion 75/100 is too low")
+        assert _BULLET_METRIC_LEAK.search("scored 33/100 in both sessions")
+
+    def test_leak_regex_catches_decimal_metrics(self):
+        from backend.coaching_bullets import _BULLET_METRIC_LEAK
+        assert _BULLET_METRIC_LEAK.search("convergence 0.309 at zero utterances")
+        assert _BULLET_METRIC_LEAK.search("ratio dropped to 0.075 floor")
+
+    def test_leak_regex_catches_jargon(self):
+        from backend.coaching_bullets import _BULLET_METRIC_LEAK
+        assert _BULLET_METRIC_LEAK.search("peripheral route avoidance is the issue")
+        assert _BULLET_METRIC_LEAK.search("central route processing dominates")
+        assert _BULLET_METRIC_LEAK.search("ELM insight reinforced from prior session")
+
+    def test_leak_regex_passes_clean_advice(self):
+        from backend.coaching_bullets import _BULLET_METRIC_LEAK
+        assert not _BULLET_METRIC_LEAK.search(
+            "You tend to stay silent — speak in the first 90 seconds"
+        )
+        assert not _BULLET_METRIC_LEAK.search(
+            "Sarah needs proof — lead with a specific number"
+        )
+        assert not _BULLET_METRIC_LEAK.search(
+            "Ask a clarifying question to re-engage the group"
+        )
+
+    def test_leak_regex_catches_internal_system_terms(self):
+        from backend.coaching_bullets import _BULLET_METRIC_LEAK
+        assert _BULLET_METRIC_LEAK.search("talk time ratio remains at zero")
+        assert _BULLET_METRIC_LEAK.search("depleted 33/0.075 floor for a second session")
+        assert _BULLET_METRIC_LEAK.search("zero-utterance session confirmed")
+
+
+# ===========================================================================
+# 15. Legacy playbook filter in coaching_memory (5 tests)
+# ===========================================================================
+
+class TestLegacyPlaybookFilter:
+    """Verify coaching_memory._filter_for_haiku strips internal data."""
+
+    def test_strips_score_lines(self):
+        from backend.coaching_memory import _filter_for_haiku
+        text = "Speak up early.\nScores: 30/100 in both sessions.\nUse structure."
+        result = _filter_for_haiku(text)
+        assert "30/100" not in result
+        assert "Speak up early" in result
+
+    def test_strips_elm_jargon(self):
+        from backend.coaching_memory import _filter_for_haiku
+        text = (
+            "Ask a question next.\n"
+            "ELM insight reinforced: peripheral processing dominates.\n"
+            "Mirror their language."
+        )
+        result = _filter_for_haiku(text)
+        assert "peripheral processing" not in result
+        assert "ELM insight" not in result
+        assert "Ask a question" in result
+
+    def test_strips_internal_system_instructions(self):
+        from backend.coaching_memory import _filter_for_haiku
+        text = (
+            "Lead with data.\n"
+            "Coaching system must intervene at 60 seconds.\n"
+            "Anchor in a number."
+        )
+        result = _filter_for_haiku(text)
+        assert "Coaching system must" not in result
+        assert "Lead with data" in result
+
+    def test_strips_table_rows(self):
+        from backend.coaching_memory import _filter_for_haiku
+        text = "Good advice here.\n| Metric | Value |\n| --- | --- |\n| Score | 42 |\nMore advice."
+        result = _filter_for_haiku(text)
+        assert "| Metric |" not in result
+        assert "Good advice" in result
+
+    def test_preserves_clean_coaching_advice(self):
+        from backend.coaching_memory import _filter_for_haiku
+        text = (
+            "Speak within the first 90 seconds.\n"
+            "Use scaffolding as your entry point.\n"
+            "Pre-commit to one opinion per meeting."
+        )
+        result = _filter_for_haiku(text)
+        assert "Speak within" in result
+        assert "scaffolding" in result
+        assert "Pre-commit" in result

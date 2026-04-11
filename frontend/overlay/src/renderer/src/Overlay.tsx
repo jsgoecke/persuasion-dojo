@@ -637,7 +637,10 @@ export function Overlay(): React.ReactElement {
         ] as const).map(({ label, sub, target, color }) => (
           <div
             key={label}
-            onClick={() => setScreen(target)}
+            onClick={() => {
+              if (target === "profiles") setProfilePickerReturn("home");
+              setScreen(target);
+            }}
             style={{
               width: "100%", display: "flex", flexDirection: "column", alignItems: "flex-start",
               padding: "14px 18px", background: "var(--bg-elevated)", color: "var(--text-primary)",

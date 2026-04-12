@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.2.0] - 2026-04-11
+
+### Added
+- Vocative-bootstrapped turn tracker: extracts name mentions from utterances ("Thanks Greg", "Sarah, what do you think?") and links them to subsequent speakers via turn adjacency. Zero API cost, ~0.1ms per utterance.
+- Turn tracker confidence boost: +0.10 when vocative link evidence agrees with LLM speaker mapping, same pattern as voiceprint boost.
+- Combined boost cap: voiceprint + turn tracker boosts cannot push confidence past lock threshold, preventing non-LLM signals from auto-locking speaker identity.
+- 3-turn lookahead window for vocative linking handles interruptions and crosstalk in multi-party meetings.
+- Timestamp gap filtering (< 5s) prevents stale turn transitions from counting as direct-address responses.
+- Case-insensitive word-boundary name matching handles ASR lowercase output ("greg" matches "Greg Wilson") while rejecting substrings ("Gregory" does not match "Greg").
+- Ambiguous first name detection: skips vocative matching when two roster entries share a first name.
+- Third-party reference filter: "Greg said", "as Greg mentioned", "Greg's point", "from Greg" are rejected as vocative cues.
+- Cold start guard: requires >= 3 vocative links before reporting scores for a speaker.
+- Turn tracker agreement/disagreement metrics tracked per speaker (not per cycle) for kill-switch evaluation.
+- User mic utterances feed into turn tracker so "Sarah, can you..." from the user links to the next counterpart speaker.
+- TURN_TRACKER_ENABLED env var kill switch (default: true). Set to "false" to disable.
+- Turn history pruned at 2000 entries to bound memory in long meetings.
+- 32 new tests: 28 for turn tracker (vocative extraction, linking, lookahead, gap filter, cold start, edge cases), 4 for resolver integration (combined boost cap, disagreement tracking).
+
 ## [0.11.1.0] - 2026-04-11
 
 ### Added

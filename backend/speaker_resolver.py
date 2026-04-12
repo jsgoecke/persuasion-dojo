@@ -121,11 +121,21 @@ class SpeakerResolver:
             "user_corrections": 0,
             "time_to_first_resolution": None,
             "locked_at_end": 0,
+            "turn_tracker_agreements": 0,
+            "turn_tracker_disagreements": 0,
         }
 
         # Voiceprint boost: set via set_voiceprint_data() from main.py
         self._voiceprint_similarities: dict[str, tuple[str, float]] = {}
         # speaker_id → (matched_name, cosine_similarity)
+
+        # Turn tracker boost: set via set_turn_tracker_scores() from main.py
+        self._turn_tracker_scores: dict[str, dict[str, float]] = {}
+        # speaker_id → {name: score}
+
+        # Track which speaker_ids already counted for turn tracker metrics
+        # to avoid overcounting across resolution cycles.
+        self._tt_counted: set[str] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -178,6 +188,16 @@ class SpeakerResolver:
         participant's voiceprint centroid with similarity > 0.7.
         """
         self._voiceprint_similarities[speaker_id] = (matched_name, similarity)
+
+    def set_turn_tracker_scores(
+        self, scores: dict[str, dict[str, float]],
+    ) -> None:
+        """Inject turn tracker vocative link scores for the next resolution cycle.
+
+        Called from main.py before each resolution cycle with the output of
+        TurnTracker.get_name_scores().
+        """
+        self._turn_tracker_scores = scores
 
     @property
     def mappings(self) -> dict[str, str]:
@@ -388,18 +408,46 @@ class SpeakerResolver:
                         continue
 
             # Voiceprint confidence boost: if a voiceprint match agrees with
-            # the LLM mapping, boost confidence by 0.15 (capped at 0.95).
+            # the LLM mapping, boost confidence by 0.15.
+            _boosted = False
             vp_match = self._voiceprint_similarities.get(speaker_id)
             if vp_match is not None:
                 vp_name, vp_sim = vp_match
                 if vp_name == name and vp_sim > 0.7:
                     old_conf = confidence
-                    # F11: Cap below lock threshold to prevent auto-lock from voiceprint alone
-                    confidence = min(confidence + 0.15, self._lock_threshold - 0.01)
+                    confidence += 0.15
+                    _boosted = True
                     logger.info(
                         "Voiceprint boost: %s %.2f → %.2f (sim=%.2f)",
                         name, old_conf, confidence, vp_sim,
                     )
+
+            # Turn tracker confidence boost: if vocative link evidence agrees
+            # with the LLM mapping, boost confidence by 0.10.
+            tt_scores = self._turn_tracker_scores.get(speaker_id)
+            if tt_scores is not None:
+                tt_score = tt_scores.get(name, 0.0)
+                if tt_score > 0:
+                    old_conf = confidence
+                    confidence += 0.10
+                    _boosted = True
+                    # Count each speaker only once for kill-switch metrics.
+                    if speaker_id not in self._tt_counted:
+                        self._metrics["turn_tracker_agreements"] += 1
+                        self._tt_counted.add(speaker_id)
+                    logger.info(
+                        "Turn tracker boost: %s %.2f → %.2f (score=%.2f)",
+                        name, old_conf, confidence, tt_score,
+                    )
+                elif tt_scores:
+                    # Tracker has scores but for a different name: disagreement.
+                    if speaker_id not in self._tt_counted:
+                        self._metrics["turn_tracker_disagreements"] += 1
+                        self._tt_counted.add(speaker_id)
+
+            # Combined cap: non-LLM boosts cannot push confidence past lock threshold.
+            if _boosted:
+                confidence = min(confidence, self._lock_threshold - 0.01)
 
             self._mappings[speaker_id] = name
             self._confidences[speaker_id] = confidence

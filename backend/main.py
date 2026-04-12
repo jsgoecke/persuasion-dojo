@@ -1570,6 +1570,12 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         ws_send=ws.send_json,
         on_mapping_updated=_persist_speaker_mapping,
     )
+
+    # ── Turn tracker (vocative bootstrapping, zero API cost) ──────────
+    _turn_tracker_enabled = os.environ.get("TURN_TRACKER_ENABLED", "true").lower() != "false"
+    from backend.turn_tracker import TurnTracker
+    turn_tracker = TurnTracker(known_names=merged_names) if _turn_tracker_enabled else None
+
     # Set resolver and voiceprint state on pipeline (explicit fields, F4)
     pipeline.resolver = resolver
     pipeline.vp_extractor = _vp_extractor
@@ -1593,6 +1599,10 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         """Mic stream = always the user. Override speaker_id."""
         if is_final and text.strip():
             _recent_mic_texts.append(text)
+            # Feed user speech to turn tracker so vocative cues like
+            # "Sarah, can you..." link to the next counterpart speaker.
+            if turn_tracker is not None:
+                turn_tracker.add_turn(_USER_SPEAKER_ID, text, start_s, end_s)
         await _handle_utterance(
             ws, pipeline,
             {"speaker_id": _USER_SPEAKER_ID, "text": text,
@@ -1616,6 +1626,12 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
         # Feed to speaker resolver for name inference
         if is_final and text.strip():
             resolver.add_utterance(prefixed_id, text)
+            if turn_tracker is not None:
+                turn_tracker.add_turn(prefixed_id, text, start_s, end_s)
+                # Feed accumulated vocative link scores to resolver
+                tt_scores = turn_tracker.get_name_scores()
+                if tt_scores:
+                    resolver.set_turn_tracker_scores(tt_scores)
 
             # ── Voiceprint: extract embedding from long segments (F1: background task) ──
             if (_vp_extractor and _vp_extractor.available

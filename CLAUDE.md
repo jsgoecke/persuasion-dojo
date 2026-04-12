@@ -43,6 +43,7 @@ persuasion-dojo/
 │   ├── sparring.py          # AI sparring partner mode (text loop, no audio)
 │   ├── retro_import.py      # Retroactive audio/text transcript processing (9 formats)
 │   ├── speaker_resolver.py  # LLM-based speaker name resolution (fuzzy matching, cross-session memory)
+│   ├── turn_tracker.py      # Vocative-bootstrapped turn tracking (zero API cost speaker signal)
 │   ├── calendar_service.py  # Google Calendar OAuth + meeting polling
 │   ├── team_sync.py         # JSON export/import for Team Intelligence
 │   ├── models.py            # User, Participant, Session, Prompt schemas + Welford M2 variance + SkillMastery
@@ -132,7 +133,8 @@ tests/
 ├── test_ace_convergence.py   # ACE loop convergence over simulated multi-session
 ├── test_linkedin.py          # LinkedIn scraper: URL validation, HTML extraction
 ├── test_retro_import.py      # Transcript parsing: 9 formats (VTT/SRT/Teams/Meet/Zoom/MD/JSON)
-├── test_speaker_resolver.py  # LLM-based speaker resolution, locking, WS notifications (41 tests)
+├── test_speaker_resolver.py  # LLM-based speaker resolution, locking, WS notifications, turn tracker boost (45 tests)
+├── test_turn_tracker.py     # Vocative extraction, turn linking, lookahead, gap filter, cold start (28 tests)
 ├── test_coaching_quality.py  # Refusal detection, bullet selection, layer boost, user feedback (49 tests)
 ├── test_database.py          # Write, read, disk-full simulation
 ├── test_calendar_service.py  # Token refresh, participant matching
@@ -147,7 +149,7 @@ tests/
     └── pre_seeding.py        # Pre-seed classification from text/email/bio inputs
 ```
 
-Run `pytest` for the full backend suite (1385+ tests, ~65s).
+Run `pytest` for the full backend suite (1477+ tests, ~55s).
 
 ## Target user
 

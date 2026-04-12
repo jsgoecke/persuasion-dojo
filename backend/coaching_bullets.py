@@ -36,11 +36,31 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_MAX_ACTIVE_BULLETS = 100
+_MAX_ACTIVE_BULLETS = 250
 _RETIRE_THRESHOLD_MARGIN = 2  # harmful >= helpful + margin → retire
 _MAX_DELTAS_PER_SESSION = 8
+_MIN_PER_CONTEXT = 5  # protect at least N bullets per context type during cap enforcement
 _MAX_CONTEXT_BULLETS = 15
 _MAX_CONTEXT_WORDS = 500
+
+# Reject Reflector bullets that contain internal metrics in their content
+_BULLET_METRIC_LEAK = re.compile(
+    r"(?:"
+    r"\d+/100"                          # "75/100"
+    r"|\d+\.\d{2,}"                     # "0.309", "0.075"
+    r"|ratio\s*[:=]\s*\d"              # "ratio: 0.0"
+    r"|score\s*[:=]\s*\d"             # "score: 75"
+    r"|convergence\s+\d"              # "convergence 0.075"
+    r"|persuasion\s+\d"               # "persuasion 42"
+    r"|timing\s+\d"                    # "timing 0.0"
+    r"|floor|threshold|depleted"       # internal jargon
+    r"|zero.utterance"                 # "zero-utterance session"
+    r"|talk.time.ratio"               # "talk time ratio"
+    r"|peripheral.route|central.route" # ELM jargon
+    r"|ELM\s+(?:insight|state|model)" # ELM framework
+    r")",
+    re.IGNORECASE,
+)
 
 # Relevance scoring weights
 _W_NET_HELPFUL = 0.5
@@ -61,6 +81,7 @@ _RECENCY_DAYS = 30
 _W_SKILL_MASTERED = -2.0   # Penalize bullets for mastered skills (P(know) > 0.85)
 _W_SKILL_LEARNING = 1.5    # Bonus for skills in zone of proximal development (P(know) 0.3–0.7)
 _W_THOMPSON = 2.0          # Scale Thompson [0,1] to match deterministic score magnitude
+_W_LAYER_BOOST = 5.0       # Boost underrepresented layers to force diversity
 
 # Effectiveness thresholds for feedback
 _EFF_HELPFUL_THRESHOLD = 0.6
@@ -107,6 +128,7 @@ def relevance_score(
     context: str | None = None,
     now: datetime | None = None,
     skill_mastery: dict[str, float] | None = None,
+    layer_boost: dict[str, float] | None = None,
 ) -> float:
     """
     Score a bullet for relevance to the current coaching situation.
@@ -114,6 +136,10 @@ def relevance_score(
     skill_mastery: optional dict of skill_key → P(know). When provided,
     applies BKT-aware weighting: mastered skills get penalized, skills in
     the zone of proximal development get a bonus.
+
+    layer_boost: optional dict of layer → bonus score. Used to boost
+    underrepresented layers (e.g. {"audience": 5.0, "group": 5.0} when
+    recent prompts were all self-layer).
     """
     now = now or datetime.now(timezone.utc)
     score = 0.0
@@ -167,6 +193,10 @@ def relevance_score(
                 score += _W_SKILL_MASTERED
             elif 0.3 <= p_know <= 0.7:
                 score += _W_SKILL_LEARNING
+
+    # Layer diversity boost
+    if layer_boost and getattr(bullet, "layer", None):
+        score += layer_boost.get(bullet.layer, 0.0)
 
     return score
 
@@ -307,11 +337,123 @@ def _read_legacy_playbook(user_id: str) -> str:
     text = path.read_text(encoding="utf-8")
     if "No patterns recorded yet" in text:
         return ""
+    # Filter out system metrics that confuse Haiku
+    text = _filter_for_haiku(text)
+    if not text:
+        return ""
     # Cap at max words
     words = text.split()
     if len(words) > _MAX_CONTEXT_WORDS:
         text = " ".join(words[:_MAX_CONTEXT_WORDS]) + "…"
     return f"YOUR COACHING PLAYBOOK (learned from prior sessions):\n{text}"
+
+
+# Patterns to strip from playbooks before sending to Haiku
+_METRIC_PATTERNS = re.compile(
+    r"(?m)^.*(?:"
+    r"\d+/100"                            # scoring metrics like "75/100"
+    r"|\d+\.\d+\s*%"                      # percentages like "34.5%"
+    r"|ratio:\s*\d"                        # "ratio: 0.0"
+    r"|score:\s*\d"                        # "score: 75"
+    r"|convergence\s+\d"                   # "convergence 0.075"
+    r"|consecutive.*session"              # "7th consecutive session"
+    r"|sessions?\s+observed"              # "sessions observed"
+    r"|zero-utterance"                    # "zero-utterance session"
+    r"|dropped\s+sharply"                 # "dropped sharply"
+    r"|talk\s+time\s+ratio"              # "talk time ratio"
+    r").*$",
+    re.IGNORECASE,
+)
+
+_TABLE_ROW_PATTERN = re.compile(r"(?m)^\s*\|.*\|.*\|\s*$")
+
+
+def _filter_for_haiku(text: str) -> str:
+    """
+    Strip scoring metrics, session diagnostics, and markdown tables
+    from playbook text before sending to Haiku.
+
+    Returns empty string if all content is metrics — empty context is
+    better than leaking internal data into user-facing prompts.
+    """
+    # Strip metric lines
+    filtered = _METRIC_PATTERNS.sub("", text)
+    # Strip markdown table rows
+    filtered = _TABLE_ROW_PATTERN.sub("", filtered)
+    # Clean up excessive blank lines
+    filtered = re.sub(r"\n{3,}", "\n\n", filtered).strip()
+
+    return filtered
+
+
+# ---------------------------------------------------------------------------
+# Single bullet selection (for select+personalize flow)
+# ---------------------------------------------------------------------------
+
+async def select_best_bullet(
+    db: AsyncSession,
+    user_id: str,
+    counterpart_archetype: str | None = None,
+    elm_state: str | None = None,
+    context: str | None = None,
+    user_archetype: str | None = None,
+    *,
+    exclude_ids: set[str] | None = None,
+    layer_boost: dict[str, float] | None = None,
+) -> CoachingBullet | None:
+    """
+    Select the single most relevant coaching bullet for personalization.
+
+    Returns the top-scored bullet after excluding already-shown IDs.
+    Falls back to general tips (no archetype filter) if nothing matches.
+    """
+    result = await db.execute(
+        select(CoachingBullet).where(
+            CoachingBullet.user_id == user_id,
+            CoachingBullet.is_active.is_(True),
+        ).order_by(CoachingBullet.updated_at.desc()).limit(100)
+    )
+    bullets = list(result.scalars())
+
+    if not bullets:
+        return None
+
+    now = datetime.now(timezone.utc)
+    exclude = exclude_ids or set()
+
+    # Score all non-excluded bullets
+    candidates = [
+        (b, contextual_relevance_score(
+            b,
+            counterpart_archetype=counterpart_archetype,
+            elm_state=elm_state,
+            context=context,
+            now=now,
+            explore=True,
+        ) + (layer_boost.get(b.layer, 0.0) if layer_boost and b.layer else 0.0))
+        for b in bullets
+        if b.id not in exclude
+    ]
+
+    if not candidates:
+        # All bullets excluded — fall back to any bullet (allow re-showing)
+        candidates = [
+            (b, contextual_relevance_score(
+                b,
+                counterpart_archetype=counterpart_archetype,
+                elm_state=elm_state,
+                context=context,
+                now=now,
+                explore=True,
+            ))
+            for b in bullets
+        ]
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda pair: pair[1], reverse=True)
+    return candidates[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +532,7 @@ async def _merge_new(
         elm_state=delta.get("elm_state"),
         context=delta.get("context"),
         user_archetype=delta.get("user_archetype"),
+        layer=delta.get("layer"),
         source_session_id=session_id,
         last_evidence_session_id=session_id,
         evidence_count=1,
@@ -452,7 +595,13 @@ async def _merge_contradict(
 
 
 async def _enforce_cap(db: AsyncSession, user_id: str) -> None:
-    """Retire lowest-scoring bullets if count exceeds cap."""
+    """
+    Retire lowest-scoring bullets if count exceeds cap.
+
+    Diversity-preserving: protects at least _MIN_PER_CONTEXT bullets per
+    context type (board, 1:1, client, etc.) and per counterpart archetype
+    so one dominant meeting type doesn't crowd out the rest.
+    """
     result = await db.execute(
         select(CoachingBullet).where(
             CoachingBullet.user_id == user_id,
@@ -469,9 +618,31 @@ async def _enforce_cap(db: AsyncSession, user_id: str) -> None:
     if excess <= 0:
         return
 
-    for bullet in active[:excess]:
+    # Build diversity counters: context + counterpart_archetype
+    context_counts: dict[str | None, int] = {}
+    archetype_counts: dict[str | None, int] = {}
+    for b in active:
+        context_counts[b.context] = context_counts.get(b.context, 0) + 1
+        archetype_counts[b.counterpart_archetype] = archetype_counts.get(b.counterpart_archetype, 0) + 1
+
+    retired = 0
+    for bullet in active:
+        if retired >= excess:
+            break
+        ctx = bullet.context
+        arch = bullet.counterpart_archetype
+        # Protect minimum diversity per context and archetype
+        # (None means "unspecified" — not a diversity category worth protecting)
+        if ctx and context_counts.get(ctx, 0) <= _MIN_PER_CONTEXT:
+            continue
+        if arch and archetype_counts.get(arch, 0) <= _MIN_PER_CONTEXT:
+            continue
         bullet.is_active = False
         bullet.retired_reason = "cap_exceeded"
+        context_counts[ctx] = context_counts.get(ctx, 0) - 1
+        if arch:
+            archetype_counts[arch] = archetype_counts.get(arch, 0) - 1
+        retired += 1
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +686,65 @@ async def update_bullet_feedback(
 
 
 # ---------------------------------------------------------------------------
+# Direct user feedback — stronger signal than auto-effectiveness
+# ---------------------------------------------------------------------------
+
+_USER_FEEDBACK_WEIGHT = 2  # User thumbs-up/down counts double vs auto-scoring
+
+
+async def record_user_feedback(
+    db: AsyncSession,
+    prompt_id: str,
+    helpful: bool,
+) -> str | None:
+    """
+    Record explicit user feedback on a coaching prompt.
+
+    Updates the Prompt.user_feedback field AND adjusts helpful/harmful counters
+    on associated coaching bullets with a stronger weight (2x) than the
+    automatic effectiveness scoring.
+
+    Returns the prompt_id on success, None if prompt not found.
+    """
+    from backend.models import Prompt
+
+    prompt = await db.get(Prompt, prompt_id)
+    if prompt is None:
+        logger.warning("Feedback for unknown prompt_id=%s", prompt_id)
+        return None
+
+    # Idempotency: reject duplicate feedback on the same prompt
+    if prompt.user_feedback is not None:
+        logger.debug("Duplicate feedback for prompt=%s, ignoring", prompt_id)
+        return prompt_id
+
+    prompt.user_feedback = "helpful" if helpful else "harmful"
+    now = datetime.now(timezone.utc)
+
+    # Update associated bullets
+    bullet_ids = [
+        bid.strip()
+        for bid in (prompt.bullet_ids_used or "").split(",")
+        if bid.strip()
+    ]
+    for bid in bullet_ids:
+        bullet = await db.get(CoachingBullet, bid)
+        if bullet is None or not bullet.is_active:
+            continue
+        if helpful:
+            bullet.helpful_count += _USER_FEEDBACK_WEIGHT
+        else:
+            bullet.harmful_count += _USER_FEEDBACK_WEIGHT
+            if bullet.harmful_count >= bullet.helpful_count + _RETIRE_THRESHOLD_MARGIN:
+                bullet.is_active = False
+                bullet.retired_reason = "user_feedback"
+        bullet.updated_at = now
+
+    logger.info("User feedback: prompt=%s helpful=%s bullets=%s", prompt_id, helpful, bullet_ids)
+    return prompt_id
+
+
+# ---------------------------------------------------------------------------
 # Reflector — extract lessons from session evidence (Opus, background)
 # ---------------------------------------------------------------------------
 
@@ -543,6 +773,7 @@ Schema for each entry:
   "counterpart_archetype": "Architect" | "Firestarter" | "Inquisitor" | "Bridge Builder" | null,
   "elm_state": "ego_threat" | "shortcut" | "consensus_protection" | null,
   "context": "board" | "team" | "1:1" | "client" | "all-hands" | null,
+  "layer": "self" | "audience" | "group",
   "confidence": 0.0-1.0
 }}
 
@@ -552,6 +783,13 @@ Rules:
 - For REINFORCE: reference the bullet_id of the bullet being confirmed
 - For CONTRADICT: reference the bullet_id and explain what conflicts
 - Prefer updating existing bullets over creating near-duplicates
+- CRITICAL: Bullet content must be plain English coaching advice that a user can act on. \
+NEVER include scores, numbers, ratios, percentages, metrics, thresholds, or internal \
+system data in bullet content. Bad: "Persuasion 42 and convergence 0.309 at zero \
+utterances". Good: "You tend to stay silent in meetings — speak in the first 90 seconds, \
+even just to ask a clarifying question."
+- Write bullets as if you are a coach speaking directly to the user. No jargon, \
+no academic terms (ELM, peripheral route, central route), no framework labels.
 - Output ONLY the JSON array. No explanation, no markdown fences."""
 
 
@@ -623,7 +861,16 @@ async def reflector_extract(
             logger.warning("Reflector returned non-list JSON: %s", type(deltas))
             return []
 
-        return deltas[:_MAX_DELTAS_PER_SESSION]
+        # Filter out any bullets that leak internal metrics into content
+        clean_deltas = []
+        for d in deltas[:_MAX_DELTAS_PER_SESSION]:
+            content = d.get("content", "")
+            if _BULLET_METRIC_LEAK.search(content):
+                logger.info("Reflector: rejected bullet with metric leak: %s", content[:80])
+                continue
+            clean_deltas.append(d)
+
+        return clean_deltas
 
     except json.JSONDecodeError as exc:
         logger.warning("Reflector returned invalid JSON: %s", exc)

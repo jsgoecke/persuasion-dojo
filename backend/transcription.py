@@ -121,7 +121,7 @@ _DEFAULT_PARAMS: dict[str, str] = {
     "sample_rate": "16000",
     "channels": "1",
     "language": "en-US",
-    "model": "nova-2",
+    "model": "nova-3",
     "diarize": "true",
     "punctuate": "true",
     "smart_format": "true",

@@ -94,6 +94,32 @@ Deferred work captured from /plan-ceo-review (2026-03-25, SCOPE EXPANSION mode) 
 
 ---
 
+## P1 — Speaker Identification Follow-ups
+
+### Deepgram multichannel=true investigation
+**What:** Investigate whether Deepgram `multichannel=true` with dual audio streams (mic + system) improves diarization accuracy vs current single mixed-audio stream. We already capture both streams separately via ScreenCaptureKit.
+**Priority:** P1
+**Context:** Deferred from Speaker ID Phase 1 /autoplan CEO review (2026-04-10). Outside Phase 1 blast radius (audio pipeline change).
+
+### Nova-3 validation on real SCK audio
+**What:** Validate Deepgram nova-3 diarization accuracy on real ScreenCaptureKit-captured audio before shipping to users. Nova-3 benchmarks are on clean recordings, not SCK mixed audio.
+**Priority:** P1
+**Context:** Deferred from Speaker ID Phase 1 /autoplan CEO review (2026-04-10). Critical to confirm the nova-2 → nova-3 upgrade doesn't regress.
+
+### ~~Manual speaker tagging fallback UX~~ ✅ COMPLETE
+**Completed (2026-04-11):** Tap-to-edit popover on live session participant pills with Save/Cancel/Escape flow. Gold "?" confidence badge when resolver confidence < 0.7, with hysteresis deadband (0.8 to clear). Confidence-based prompt suppression uses "the current speaker" when confidence < 0.7.
+**Context:** Implemented in Speaker ID Phase 2 (feat/coaching-quality-cache-rank-rotate).
+
+### ~~Adaptive resolver scheduling~~ ✅ COMPLETE
+**Completed (2026-04-11):** 10s during intro phase (0-120s), 15s default, 60s when all speakers locked. Resolver skips API calls when no new utterances arrive.
+**Context:** Implemented in Speaker ID Phase 2 (feat/coaching-quality-cache-rank-rotate).
+
+### ~~Speaker ID Phase 2 decision gate~~ ✅ COMPLETE
+**Completed (2026-04-11):** Resolver accuracy metrics (total resolutions, user corrections, time to first resolution) tracked per session. WeSpeaker ECAPA-TDNN voiceprint extraction + storage + confidence boost shipped alongside, so the decision gate is moot. Voiceprint centroids persist cross-session via EMA updates.
+**Context:** Implemented in Speaker ID Phase 2 (feat/coaching-quality-cache-rank-rotate).
+
+---
+
 ## Deferred from CEO Plan (previously identified)
 
 - **Zoom SDK integration** — ScreenCaptureKit covers all platforms without it

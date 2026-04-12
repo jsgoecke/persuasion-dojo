@@ -877,3 +877,93 @@ class TestConfidenceSuppression:
         ])
         # counterpart_0 → index 0 → Alice Chen, but confidence is 0.4
         assert engine._resolve_speaker_name("counterpart_0") == ""
+
+
+# ---------------------------------------------------------------------------
+# Turn tracker boost integration
+# ---------------------------------------------------------------------------
+
+class TestTurnTrackerBoost:
+    """Test turn tracker confidence boost in _resolve_once."""
+
+    @pytest.mark.asyncio
+    async def test_turn_tracker_boost_agrees(self):
+        """Turn tracker boost adds +0.10 when it agrees with LLM mapping."""
+        resolver, mock_create = _make_resolver(
+            known_names=["Greg Wilson", "Sarah Chen"],
+            confidence_threshold=0.7,
+            lock_threshold=0.8,
+        )
+        _add_utterances(resolver, n=6, speaker="counterpart_0")
+        mock_create.return_value = _make_llm_response([
+            {"speaker_id": "counterpart_0", "name": "Greg Wilson",
+             "confidence": 0.72, "evidence": "said Hi Greg"},
+        ])
+        # Inject turn tracker scores that agree with LLM
+        resolver.set_turn_tracker_scores({
+            "counterpart_0": {"Greg Wilson": 1.0},
+        })
+        await resolver._resolve_once()
+        # 0.72 + 0.10 = 0.82, but capped at lock_threshold - 0.01 = 0.79
+        assert resolver._confidences["counterpart_0"] == pytest.approx(0.79, abs=0.01)
+        assert resolver._metrics["turn_tracker_agreements"] == 1
+
+    @pytest.mark.asyncio
+    async def test_turn_tracker_disagreement_tracked(self):
+        """Turn tracker disagreement is recorded in metrics."""
+        resolver, mock_create = _make_resolver(
+            known_names=["Greg Wilson", "Sarah Chen"],
+        )
+        _add_utterances(resolver, n=6)
+        mock_create.return_value = _make_llm_response([
+            {"speaker_id": "counterpart_0", "name": "Greg Wilson",
+             "confidence": 0.75, "evidence": "context"},
+        ])
+        # Tracker says Sarah, LLM says Greg
+        resolver.set_turn_tracker_scores({
+            "counterpart_0": {"Sarah Chen": 1.0},
+        })
+        await resolver._resolve_once()
+        assert resolver._metrics["turn_tracker_disagreements"] == 1
+
+    @pytest.mark.asyncio
+    async def test_combined_voiceprint_and_turn_tracker_capped(self):
+        """Voiceprint + turn tracker boosts combined cannot exceed lock threshold."""
+        resolver, mock_create = _make_resolver(
+            known_names=["Greg Wilson"],
+            confidence_threshold=0.7,
+            lock_threshold=0.8,
+        )
+        _add_utterances(resolver, n=6, speaker="counterpart_0")
+        mock_create.return_value = _make_llm_response([
+            {"speaker_id": "counterpart_0", "name": "Greg Wilson",
+             "confidence": 0.72, "evidence": "context"},
+        ])
+        # Both boosts agree
+        resolver.set_voiceprint_match("counterpart_0", "Greg Wilson", 0.85)
+        resolver.set_turn_tracker_scores({
+            "counterpart_0": {"Greg Wilson": 1.0},
+        })
+        await resolver._resolve_once()
+        # 0.72 + 0.15 (voiceprint) + 0.10 (turn tracker) = 0.97,
+        # but capped at 0.79
+        assert resolver._confidences["counterpart_0"] == pytest.approx(0.79, abs=0.01)
+        assert "counterpart_0" not in resolver._locked
+
+    @pytest.mark.asyncio
+    async def test_turn_tracker_no_scores_no_effect(self):
+        """When turn tracker has no scores, confidence is unchanged (except cap)."""
+        resolver, mock_create = _make_resolver(
+            known_names=["Greg Wilson"],
+            confidence_threshold=0.7,
+            lock_threshold=0.8,
+        )
+        _add_utterances(resolver, n=6, speaker="counterpart_0")
+        mock_create.return_value = _make_llm_response([
+            {"speaker_id": "counterpart_0", "name": "Greg Wilson",
+             "confidence": 0.75, "evidence": "context"},
+        ])
+        # No turn tracker scores
+        await resolver._resolve_once()
+        # 0.75, capped at 0.79 — no boost, but cap applies
+        assert resolver._confidences["counterpart_0"] == pytest.approx(0.75, abs=0.01)

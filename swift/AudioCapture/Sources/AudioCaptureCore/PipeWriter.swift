@@ -12,25 +12,25 @@ import Foundation
 ///
 /// This means the capture callbacks never block and never see FIFO errors.
 /// Audio produced while no reader is connected is silently dropped.
-final class PipeWriter {
+public final class PipeWriter {
     private let path: String
     private let queue = DispatchQueue(label: "pipe.writer", qos: .userInteractive)
     private var fd: Int32 = -1
     private var connecting = false
     private var stopped = false
 
-    init(path: String) {
+    public init(path: String) {
         self.path = path
     }
 
     /// Begin accepting writes. Opens the FIFO in the background (blocks until a reader connects).
-    func start() {
+    public func start() {
         queue.async { self._openFifo() }
     }
 
     /// Write raw bytes to the FIFO. Safe to call from any thread.
     /// If the FIFO is not connected (no reader), the data is silently dropped.
-    func write(_ data: Data) {
+    public func write(_ data: Data) {
         queue.async { [self] in
             guard fd >= 0 else { return } // no reader connected — drop
             let ok = data.withUnsafeBytes { ptr -> Bool in
@@ -49,7 +49,7 @@ final class PipeWriter {
     }
 
     /// Stop the writer and close the fd. After this, all writes are dropped.
-    func stop() {
+    public func stop() {
         queue.sync {
             stopped = true
             if fd >= 0 {

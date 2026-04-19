@@ -6,7 +6,7 @@ import Foundation
 /// Uses AVAudioEngine to tap the default input device.  The audio is converted
 /// from whatever the hardware format is to mono 16 kHz Int16 LE to match the
 /// ScreenCaptureKit output so both streams share the same FIFO.
-final class MicCapture {
+public final class MicCapture {
     private let engine = AVAudioEngine()
     private var mixer: AudioMixer?
 
@@ -18,8 +18,10 @@ final class MicCapture {
         interleaved: true
     )!
 
+    public init() {}
+
     /// Start capturing the default microphone input.
-    func start(mixer mx: AudioMixer) throws {
+    public func start(mixer mx: AudioMixer) throws {
         self.mixer = mx
 
         let inputNode = engine.inputNode
@@ -79,7 +81,7 @@ final class MicCapture {
         fputs("MicCapture: started (\(hwFormat.sampleRate) Hz → 16 kHz mono)\n", stderr)
     }
 
-    func stop() {
+    public func stop() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         fputs("MicCapture: stopped\n", stderr)

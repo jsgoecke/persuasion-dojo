@@ -11,7 +11,7 @@ import Foundation
 /// Each pipe gets rate-controlled output at 32 KB/s (1× realtime) when its source
 /// has data. If a source has no data for a given flush, nothing is written to that
 /// pipe (no silence padding).
-final class AudioMixer {
+public final class AudioMixer {
     private let systemWriter: PipeWriter
     private let micWriter: PipeWriter
     private let queue = DispatchQueue(label: "audio.mixer", qos: .userInteractive)
@@ -39,14 +39,14 @@ final class AudioMixer {
     private var meterMicIn: Int = 0
     private var meterStart: UInt64 = 0
 
-    init(systemWriter: PipeWriter, micWriter: PipeWriter) {
+    public init(systemWriter: PipeWriter, micWriter: PipeWriter) {
         self.systemWriter = systemWriter
         self.micWriter = micWriter
     }
 
     // MARK: - Lifecycle
 
-    func start() {
+    public func start() {
         queue.async { [self] in
             guard !stopped else { return }
             let t = DispatchSource.makeTimerSource(queue: queue)
@@ -62,7 +62,7 @@ final class AudioMixer {
         }
     }
 
-    func stop() {
+    public func stop() {
         queue.sync {
             stopped = true
             timer?.cancel()

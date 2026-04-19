@@ -1,6 +1,7 @@
 import Foundation
 import ScreenCaptureKit
 import AVFoundation
+import AudioCaptureCore
 
 // ── Constants ──────────────────────────────────────────────────────────────
 

@@ -1,0 +1,24 @@
+services:
+  backend:
+    build: .
+    image: persuasion-dojo-backend:latest
+    container_name: persuasion-dojo-backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - persuasion-dojo-data:/app/data/db
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  persuasion-dojo-data:

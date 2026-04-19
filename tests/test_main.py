@@ -1952,3 +1952,24 @@ class TestDeleteSessionPersists:
     def test_delete_nonexistent_session_returns_404(self, client):
         resp = client.delete("/sessions/nonexistent-id")
         assert resp.status_code == 404
+
+
+# ── AudioTcpServer lifespan integration ─────────────────────────────────────
+
+from backend.audio_tcp_server import AudioTcpServer
+
+
+@pytest.mark.asyncio
+async def test_lifespan_starts_and_stops_audio_tcp_server(monkeypatch) -> None:
+    # Bind to an ephemeral port to avoid collisions
+    monkeypatch.setenv("AUDIO_TCP_PORT", "0")
+    from backend.main import app
+
+    # Drive lifespan startup/shutdown directly — httpx ASGITransport does
+    # not fire lifespan events, so use the app's lifespan_context manager.
+    async with app.router.lifespan_context(app):
+        server: AudioTcpServer = app.state.audio_tcp_server  # type: ignore[attr-defined]
+        assert isinstance(server, AudioTcpServer)
+        assert server.is_running is True
+
+    assert server.is_running is False

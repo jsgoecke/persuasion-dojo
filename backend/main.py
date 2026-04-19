@@ -76,6 +76,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import anthropic as _anthropic
 
 from backend.audio import AudioPipeReader
+from backend.audio_tcp_server import AudioTcpServer
 from backend.calendar_service import CalendarService, WatchChannel
 from backend.coaching_engine import CoachingEngine, CoachingPrompt
 from backend.coaching_memory import update_playbook  # legacy fallback, kept for compatibility
@@ -129,6 +130,7 @@ from backend.transcriber_protocol import Transcriber
 _DEFAULT_USER_ID = "local-user"        # single-user V1 app
 _USER_SPEAKER_ID = "user"              # deterministic — mic pipe guarantees this
 _DEFAULT_MIC_PIPE_PATH = "/tmp/persuasion_mic.pipe"
+_DEFAULT_AUDIO_TCP_PORT = 9090
 
 
 def is_echo(text: str, recent_mic_texts: collections.deque[str], threshold: float = 0.6) -> bool:
@@ -549,21 +551,27 @@ class WatchResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialise the database on startup; clean up resources on shutdown."""
+    """Initialise the database and audio TCP server; clean up on shutdown."""
     await init_db()
     async with get_db_session() as db:
         await _get_or_create_user(db)
+
+    port = int(os.environ.get("AUDIO_TCP_PORT", _DEFAULT_AUDIO_TCP_PORT))
+    audio_tcp_server = AudioTcpServer(host="127.0.0.1", port=port)
+    await audio_tcp_server.start()
+    app.state.audio_tcp_server = audio_tcp_server
+
     _background_tasks: set[asyncio.Task] = set()
     app.state.background_tasks = _background_tasks
     yield
     # ── Shutdown cleanup ──
-    # Pipe cleanup is owned by AudioPipeReader.stop() — do not duplicate here.
     # Cancel tracked background tasks (debrief, playbook updates)
     # Copy the set to avoid RuntimeError if done callbacks fire during iteration.
     for task in list(_background_tasks):
         if not task.done():
             task.cancel()
     _background_tasks.clear()
+    await audio_tcp_server.stop()
 
 
 app = FastAPI(

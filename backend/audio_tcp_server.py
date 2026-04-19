@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 9090
 
+# Wire protocol constants
+HANDSHAKE_MAGIC = 0xAD
+STREAM_TAG_SYSTEM = 0x01
+STREAM_TAG_MIC = 0x02
+_VALID_STREAM_TAGS = frozenset({STREAM_TAG_SYSTEM, STREAM_TAG_MIC})
+
+
+async def _read_handshake(reader: asyncio.StreamReader) -> int | None:
+    """Read 2-byte handshake; return stream tag on success, None on invalid/EOF."""
+    try:
+        header = await reader.readexactly(2)
+    except asyncio.IncompleteReadError:
+        return None
+    if header[0] != HANDSHAKE_MAGIC:
+        return None
+    tag = header[1]
+    if tag not in _VALID_STREAM_TAGS:
+        return None
+    return tag
+
 
 class AudioTcpServer:
     """Loopback TCP listener for Swift ScreenCaptureKit audio streams."""
@@ -50,7 +70,17 @@ class AudioTcpServer:
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        # Handshake + routing added in Task 2 / Task 3.
+        peer = writer.get_extra_info("peername")
+        tag = await _read_handshake(reader)
+        if tag is None:
+            logger.warning("AudioTcpServer: rejected handshake from %s", peer)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return
+        # Routing added in Task 3; for now, close.
         writer.close()
         try:
             await writer.wait_closed()

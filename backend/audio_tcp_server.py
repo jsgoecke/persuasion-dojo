@@ -25,6 +25,7 @@ STREAM_TAG_MIC = 0x02
 _VALID_STREAM_TAGS = frozenset({STREAM_TAG_SYSTEM, STREAM_TAG_MIC})
 
 _READ_CHUNK_BYTES = 4096
+_DEFAULT_PARK_TIMEOUT_S = 30.0
 
 
 class _Connection:
@@ -35,6 +36,19 @@ class _Connection:
     def __init__(self, tag: int, writer: asyncio.StreamWriter) -> None:
         self.tag = tag
         self.writer = writer
+
+
+class _Pending:
+    """Buffers bytes from a handshake-validated connection awaiting a reader."""
+
+    __slots__ = ("tag", "writer", "buffer", "attached_event", "queue")
+
+    def __init__(self, tag: int, writer: asyncio.StreamWriter) -> None:
+        self.tag = tag
+        self.writer = writer
+        self.buffer: list[bytes] = []
+        self.attached_event = asyncio.Event()
+        self.queue: asyncio.Queue[bytes] | None = None
 
 
 async def _read_handshake(reader: asyncio.StreamReader) -> int | None:
@@ -54,12 +68,20 @@ async def _read_handshake(reader: asyncio.StreamReader) -> int | None:
 class AudioTcpServer:
     """Loopback TCP listener for Swift ScreenCaptureKit audio streams."""
 
-    def __init__(self, *, host: str = _DEFAULT_HOST, port: int = _DEFAULT_PORT) -> None:
+    def __init__(
+        self,
+        *,
+        host: str = _DEFAULT_HOST,
+        port: int = _DEFAULT_PORT,
+        park_timeout_s: float = _DEFAULT_PARK_TIMEOUT_S,
+    ) -> None:
         self._host = host
         self._port = port
+        self._park_timeout_s = park_timeout_s
         self._server: asyncio.base_events.Server | None = None
         self._queues: dict[int, asyncio.Queue[bytes]] = {}
         self._active: dict[int, _Connection] = {}
+        self._pending: dict[int, _Pending] = {}
 
     @property
     def is_running(self) -> bool:
@@ -89,6 +111,14 @@ class AudioTcpServer:
             raise RuntimeError(f"stream tag {stream_tag} already registered")
         queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._queues[stream_tag] = queue
+
+        pending = self._pending.pop(stream_tag, None)
+        if pending is not None:
+            # Drain buffered bytes first, preserving order
+            for chunk in pending.buffer:
+                queue.put_nowait(chunk)
+            pending.queue = queue
+            pending.attached_event.set()
         return queue
 
     def unregister(self, stream_tag: int) -> None:
@@ -117,14 +147,31 @@ class AudioTcpServer:
 
         queue = self._queues.get(tag)
         if queue is None:
-            # Task 4 adds parking; for now drop unregistered connections.
-            logger.info("AudioTcpServer: no reader for tag=%d, closing", tag)
-            writer.close()
+            # Park until a reader registers, the client closes, or timeout.
+            if tag in self._pending:
+                logger.info(
+                    "AudioTcpServer: tag=%d already parked; closing newer conn", tag
+                )
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                return
+            pending = _Pending(tag=tag, writer=writer)
+            self._pending[tag] = pending
             try:
-                await writer.wait_closed()
-            except Exception:
-                pass
-            return
+                queue = await self._park_until_attached(reader, pending)
+            finally:
+                self._pending.pop(tag, None)
+            if queue is None:
+                # Timeout or EOF while parked
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                return
 
         conn = _Connection(tag=tag, writer=writer)
         self._active[tag] = conn
@@ -146,3 +193,42 @@ class AudioTcpServer:
                 await writer.wait_closed()
             except Exception:
                 pass
+
+    async def _park_until_attached(
+        self, reader: asyncio.StreamReader, pending: _Pending
+    ) -> asyncio.Queue[bytes] | None:
+        """Buffer bytes until a reader attaches or the park timeout elapses."""
+        async def _buffer_reader() -> None:
+            while not pending.attached_event.is_set():
+                try:
+                    data = await reader.read(_READ_CHUNK_BYTES)
+                except (ConnectionResetError, asyncio.CancelledError):
+                    return
+                if not data:
+                    return
+                pending.buffer.append(data)
+
+        buffer_task = asyncio.create_task(_buffer_reader())
+        attach_task = asyncio.create_task(pending.attached_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {buffer_task, attach_task},
+                timeout=self._park_timeout_s,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            if not attach_task.done():
+                attach_task.cancel()
+                try:
+                    await attach_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if not buffer_task.done():
+                buffer_task.cancel()
+                try:
+                    await buffer_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        if pending.attached_event.is_set():
+            return pending.queue
+        return None

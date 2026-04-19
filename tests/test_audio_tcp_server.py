@@ -197,3 +197,57 @@ async def test_unregister_closes_active_socket() -> None:
         await w.wait_closed()
     finally:
         await server.stop()
+
+
+# ── Pending connection parking ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_pending_connection_drains_to_reader_after_register() -> None:
+    port = _pick_port()
+    server = AudioTcpServer(host="127.0.0.1", port=port, park_timeout_s=5.0)
+    await server.start()
+    try:
+        r, w = await _connect(port)
+        w.write(bytes([MAGIC, TAG_SYSTEM]))
+        w.write(b"PRE-REG-BYTES")
+        await w.drain()
+        await asyncio.sleep(0.1)  # let the server park the connection
+
+        queue = server.register(TAG_SYSTEM)
+
+        # Parked bytes must drain as the first message
+        first = await asyncio.wait_for(queue.get(), timeout=1.0)
+        assert first == b"PRE-REG-BYTES"
+
+        # And new bytes flow live
+        w.write(b"LIVE")
+        await w.drain()
+        second = await asyncio.wait_for(queue.get(), timeout=1.0)
+        assert second == b"LIVE"
+
+        w.close()
+        await w.wait_closed()
+    finally:
+        server.unregister(TAG_SYSTEM)
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_pending_connection_closes_after_park_timeout() -> None:
+    port = _pick_port()
+    # Short timeout for test
+    server = AudioTcpServer(host="127.0.0.1", port=port, park_timeout_s=0.2)
+    await server.start()
+    try:
+        r, w = await _connect(port)
+        w.write(bytes([MAGIC, TAG_SYSTEM]))
+        await w.drain()
+
+        # No register() — wait past the timeout
+        data = await asyncio.wait_for(r.read(1), timeout=1.0)
+        assert data == b""
+        w.close()
+        await w.wait_closed()
+    finally:
+        await server.stop()

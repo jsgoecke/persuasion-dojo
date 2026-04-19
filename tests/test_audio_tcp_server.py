@@ -251,3 +251,42 @@ async def test_pending_connection_closes_after_park_timeout() -> None:
         await w.wait_closed()
     finally:
         await server.stop()
+
+
+# ── Duplicate stream-tag rejection ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_duplicate_tag_while_active_closes_newer_connection() -> None:
+    port = _pick_port()
+    server = AudioTcpServer(host="127.0.0.1", port=port)
+    await server.start()
+    try:
+        queue = server.register(TAG_SYSTEM)
+
+        # First connection attaches as active
+        r1, w1 = await _connect(port)
+        w1.write(bytes([MAGIC, TAG_SYSTEM]))
+        w1.write(b"FIRST")
+        await w1.drain()
+        assert await asyncio.wait_for(queue.get(), timeout=1.0) == b"FIRST"
+
+        # Second connection with same tag must be rejected
+        r2, w2 = await _connect(port)
+        w2.write(bytes([MAGIC, TAG_SYSTEM]))
+        w2.write(b"SHOULD-NOT-ARRIVE")
+        await w2.drain()
+        data = await asyncio.wait_for(r2.read(1), timeout=1.0)
+        assert data == b""
+
+        # First connection still delivers bytes to the queue
+        w1.write(b"STILL-HERE")
+        await w1.drain()
+        assert await asyncio.wait_for(queue.get(), timeout=1.0) == b"STILL-HERE"
+
+        for w in (w1, w2):
+            w.close()
+            await w.wait_closed()
+    finally:
+        server.unregister(TAG_SYSTEM)
+        await server.stop()

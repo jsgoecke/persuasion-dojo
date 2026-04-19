@@ -173,6 +173,17 @@ class AudioTcpServer:
                     pass
                 return
 
+        if tag in self._active:
+            logger.info(
+                "AudioTcpServer: duplicate tag=%d while active, closing newer conn", tag
+            )
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return
+
         conn = _Connection(tag=tag, writer=writer)
         self._active[tag] = conn
         try:

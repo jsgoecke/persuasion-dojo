@@ -134,8 +134,10 @@ class AudioTcpServer:
                 if not data:
                     return
                 await queue.put(data)
-        except (ConnectionResetError, asyncio.CancelledError):
+        except ConnectionResetError:
             return
+        except asyncio.CancelledError:
+            raise
         finally:
             if self._active.get(tag) is conn:
                 self._active.pop(tag, None)

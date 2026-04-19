@@ -75,7 +75,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import anthropic as _anthropic
 
-from backend.audio import AudioPipeReader
+from backend.audio import AudioTcpReader
 from backend.audio_tcp_server import AudioTcpServer
 from backend.calendar_service import CalendarService, WatchChannel
 from backend.coaching_engine import CoachingEngine, CoachingPrompt
@@ -129,7 +129,6 @@ from backend.transcriber_protocol import Transcriber
 
 _DEFAULT_USER_ID = "local-user"        # single-user V1 app
 _USER_SPEAKER_ID = "user"              # deterministic — mic pipe guarantees this
-_DEFAULT_MIC_PIPE_PATH = "/tmp/persuasion_mic.pipe"
 _DEFAULT_AUDIO_TCP_PORT = 9090
 
 
@@ -1373,13 +1372,15 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
 
     Audio pipeline
     ──────────────
-    On connect we start:
-      AudioPipeReader  →  HybridTranscriber  →  on_utterance → _handle_utterance
-    Both are stopped when the session ends or the connection closes.
+    On connect we register two AudioTcpReader instances (system + mic) with
+    the process-scoped AudioTcpServer. Each reader drains its per-tag queue:
+      AudioTcpReader  →  HybridTranscriber  →  on_utterance → _handle_utterance
+    Both are stopped (and unregistered) when the session ends or the
+    connection closes.
 
-    If AudioPipeReader's silence watchdog fires (Swift binary stopped writing),
-    we send {"type": "swift_restart_needed"} so the Electron renderer can ask
-    the main process to restart the capture binary.
+    If AudioTcpReader's silence watchdog fires (Swift client disconnected),
+    we send {"type": "swift_restart_needed"} so the Electron renderer can
+    ask the main process to restart the capture binary.
     """
     # Verify the session exists in the DB
     async with get_db_session() as db:
@@ -1621,7 +1622,7 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     #    of recent mic texts and drop system utterances with high overlap.
     _recent_mic_texts: collections.deque[str] = collections.deque(maxlen=10)
 
-    # ── Audio pipeline (dual-pipe: mic + system) ──────────────────────
+    # ── Audio pipeline (TCP: system tag 0x01, mic tag 0x02) ───────────
 
     async def _on_mic_utterance(
         speaker_id: str, text: str, is_final: bool, start_s: float, end_s: float
@@ -1855,43 +1856,29 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
 
         return _on_audio_chunk
 
-    _dual_pipe_mode = os.path.exists(_DEFAULT_MIC_PIPE_PATH)
+    from backend.audio_tcp_server import STREAM_TAG_MIC, STREAM_TAG_SYSTEM
 
     _on_mic_chunk = _make_audio_chunk_handler(mic_transcriber, "mic", is_mic=True)
-    # In single-pipe mode, system handler also meters audio levels
     _on_system_chunk = _make_audio_chunk_handler(
-        system_transcriber, "system", is_mic=not _dual_pipe_mode,
+        system_transcriber, "system", is_mic=False,
     )
 
-    # Dual readers: mic pipe (no silence watchdog) + system pipe (with watchdog)
-    system_reader = AudioPipeReader(
+    audio_tcp_server = app.state.audio_tcp_server
+    system_reader = AudioTcpReader(
+        server=audio_tcp_server,
+        stream_tag=STREAM_TAG_SYSTEM,
         on_audio_chunk=_on_system_chunk,
         on_silence_timeout=_on_silence,
     )
-    mic_reader: AudioPipeReader | None = None
-
-    if _dual_pipe_mode:
-        mic_reader = AudioPipeReader(
-            pipe_path=_DEFAULT_MIC_PIPE_PATH,
-            on_audio_chunk=_on_mic_chunk,
-            on_silence_timeout=None,  # Mic silence is normal (user muted)
-        )
+    mic_reader = AudioTcpReader(
+        server=audio_tcp_server,
+        stream_tag=STREAM_TAG_MIC,
+        on_audio_chunk=_on_mic_chunk,
+        on_silence_timeout=None,  # Mic silence is normal (user muted)
+    )
 
     try:
-        if mic_reader:
-            # Start both readers concurrently
-            await asyncio.gather(
-                system_reader.start(),
-                mic_reader.start(),
-            )
-        else:
-            # Fallback: single-pipe mode (old Swift binary)
-            logger.warning(
-                "Mic pipe not found at %s — using single-pipe mode. "
-                "Update AudioCapture binary for accurate speaker identification.",
-                _DEFAULT_MIC_PIPE_PATH,
-            )
-            await system_reader.start()
+        await asyncio.gather(system_reader.start(), mic_reader.start())
     except Exception as exc:
         await ws.send_json({
             "type": "error",

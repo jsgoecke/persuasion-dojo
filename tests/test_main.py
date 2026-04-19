@@ -59,9 +59,9 @@ from sqlalchemy import select
 # ---------------------------------------------------------------------------
 # Audio pipeline stub
 #
-# websocket_session now starts AudioPipeReader + DeepgramTranscriber.
+# websocket_session now starts AudioTcpReader + DeepgramTranscriber.
 # Patch both at the backend.main import level so tests never touch a real
-# FIFO or Deepgram WebSocket.
+# TCP socket or Deepgram WebSocket.
 
 @pytest.fixture(autouse=True)
 def stub_audio_pipeline():
@@ -76,7 +76,7 @@ def stub_audio_pipeline():
     transcriber_mock.send_audio = AsyncMock()
 
     with (
-        patch("backend.main.AudioPipeReader", return_value=pipe_mock),
+        patch("backend.main.AudioTcpReader", return_value=pipe_mock),
         patch("backend.main.HybridTranscriber", return_value=transcriber_mock),
         patch("backend.main._load_settings", return_value={
             "deepgram_api_key": "test-dg-key",

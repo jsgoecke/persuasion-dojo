@@ -133,6 +133,23 @@ _DEFAULT_MIC_PIPE_PATH = "/tmp/persuasion_mic.pipe"
 _DEFAULT_AUDIO_TCP_PORT = 9090
 
 
+def _parse_audio_tcp_port(raw: str | None) -> int:
+    """Parse AUDIO_TCP_PORT env var; default on empty/unset; validate range."""
+    if raw is None or raw == "":
+        return _DEFAULT_AUDIO_TCP_PORT
+    try:
+        port = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"AUDIO_TCP_PORT must be an integer 0–65535, got {raw!r}"
+        ) from exc
+    if not 0 <= port <= 65535:
+        raise ValueError(
+            f"AUDIO_TCP_PORT must be between 0 and 65535, got {port}"
+        )
+    return port
+
+
 def is_echo(text: str, recent_mic_texts: collections.deque[str], threshold: float = 0.6) -> bool:
     """Return True if text overlaps significantly with recent mic utterances.
 
@@ -556,22 +573,27 @@ async def lifespan(app: FastAPI):
     async with get_db_session() as db:
         await _get_or_create_user(db)
 
-    port = int(os.environ.get("AUDIO_TCP_PORT", _DEFAULT_AUDIO_TCP_PORT))
+    port = _parse_audio_tcp_port(os.environ.get("AUDIO_TCP_PORT"))
     audio_tcp_server = AudioTcpServer(host="127.0.0.1", port=port)
     await audio_tcp_server.start()
     app.state.audio_tcp_server = audio_tcp_server
 
     _background_tasks: set[asyncio.Task] = set()
     app.state.background_tasks = _background_tasks
-    yield
-    # ── Shutdown cleanup ──
-    # Cancel tracked background tasks (debrief, playbook updates)
-    # Copy the set to avoid RuntimeError if done callbacks fire during iteration.
-    for task in list(_background_tasks):
-        if not task.done():
-            task.cancel()
-    _background_tasks.clear()
-    await audio_tcp_server.stop()
+    try:
+        yield
+    finally:
+        # ── Shutdown cleanup ──
+        # Cancel tracked background tasks (debrief, playbook updates)
+        # Copy the set to avoid RuntimeError if done callbacks fire during iteration.
+        for task in list(_background_tasks):
+            if not task.done():
+                task.cancel()
+        _background_tasks.clear()
+        try:
+            await audio_tcp_server.stop()
+        except Exception:
+            logger.exception("audio_tcp_server.stop() failed during shutdown")
 
 
 app = FastAPI(

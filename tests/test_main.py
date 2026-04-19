@@ -1973,3 +1973,24 @@ async def test_lifespan_starts_and_stops_audio_tcp_server(monkeypatch) -> None:
         assert server.is_running is True
 
     assert server.is_running is False
+
+
+# ── AUDIO_TCP_PORT parse helper ─────────────────────────────────────────────
+
+
+def test_parse_audio_tcp_port_defaults_when_unset() -> None:
+    from backend.main import _DEFAULT_AUDIO_TCP_PORT, _parse_audio_tcp_port
+    assert _parse_audio_tcp_port(None) == _DEFAULT_AUDIO_TCP_PORT
+    assert _parse_audio_tcp_port("") == _DEFAULT_AUDIO_TCP_PORT
+
+
+def test_parse_audio_tcp_port_rejects_non_integer() -> None:
+    from backend.main import _parse_audio_tcp_port
+    with pytest.raises(ValueError, match="AUDIO_TCP_PORT must be an integer"):
+        _parse_audio_tcp_port("abc")
+
+
+def test_parse_audio_tcp_port_rejects_out_of_range() -> None:
+    from backend.main import _parse_audio_tcp_port
+    with pytest.raises(ValueError, match="between 0 and 65535"):
+        _parse_audio_tcp_port("99999")

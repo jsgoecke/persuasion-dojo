@@ -1880,6 +1880,13 @@ async def websocket_session(ws: WebSocket, session_id: str) -> None:
     try:
         await asyncio.gather(system_reader.start(), mic_reader.start())
     except Exception as exc:
+        # gather does not cancel siblings on first failure; stop both readers
+        # so the one that did start releases its server queue slot.
+        for _r in (system_reader, mic_reader):
+            try:
+                await _r.stop()
+            except Exception:
+                logger.exception("reader stop() failed during audio pipeline cleanup")
         await ws.send_json({
             "type": "error",
             "message": f"Audio pipeline failed: {exc}",

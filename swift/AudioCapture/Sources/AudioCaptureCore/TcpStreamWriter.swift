@@ -50,7 +50,16 @@ public final class TcpStreamWriter {
             guard fd >= 0 else { return }
             let ok = data.withUnsafeBytes { ptr -> Bool in
                 guard let base = ptr.baseAddress, ptr.count > 0 else { return true }
-                return Darwin.write(fd, base, ptr.count) >= 0
+                // Loop until all bytes are written or an error occurs —
+                // stream sockets can legally return a short count.
+                var sent = 0
+                let total = ptr.count
+                while sent < total {
+                    let n = Darwin.write(fd, base.advanced(by: sent), total - sent)
+                    if n <= 0 { return false }
+                    sent += n
+                }
+                return true
             }
             if !ok {
                 fputs("TcpStreamWriter: write failed (errno \(errno)), reconnecting…\n",
@@ -98,10 +107,22 @@ public final class TcpStreamWriter {
         let sock = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard sock >= 0 else { return false }
 
+        // Prevent SIGPIPE killing the process if the peer closes mid-write.
+        // Best-effort; ignoring the return value is intentional.
+        var one: Int32 = 1
+        setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &one,
+                   socklen_t(MemoryLayout<Int32>.size))
+
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = port.bigEndian
-        inet_pton(AF_INET, host, &addr.sin_addr)
+        // inet_pton returns 1 on success, 0 on malformed literal, -1 on EAFNOSUPPORT.
+        // Anything other than 1 means we'd silently bind to 0.0.0.0 — fail fast.
+        if inet_pton(AF_INET, host, &addr.sin_addr) != 1 {
+            Darwin.close(sock)
+            fputs("TcpStreamWriter: invalid IPv4 host \(host)\n", stderr)
+            return false
+        }
 
         let connectRes = withUnsafePointer(to: &addr) { ptr -> Int32 in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {

@@ -11,6 +11,34 @@ uvicorn backend.main:app --reload  # start FastAPI dev server
 pytest                      # run tests
 ```
 
+### Docker (backend only)
+
+````bash
+cp .env.example .env           # first-time setup, then fill in API keys
+docker compose up -d --build   # build image and start backend on :8000
+docker compose logs -f backend # tail logs
+curl localhost:8000/health     # smoke test
+docker compose down            # stop; SQLite data persists in the named volume
+````
+
+The Docker image is backend-only. The Swift ScreenCaptureKit binary and
+Electron overlay continue to run on the host Mac — live audio capture is
+not available inside the container. A future PR refactors audio transport
+to TCP before re-opening containerized live audio. See
+`docs/superpowers/specs/2026-04-19-dockerize-backend-design.md`.
+
+**Host venv users:** the `requirements.txt` split means test tooling is
+now in `requirements-dev.txt`. Install both for a working dev env:
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+```
+
+**Note:** `docker-compose.yml` sets `container_name: persuasion-dojo-backend`,
+so only one instance of this stack can run at a time on a given Docker host.
+Running two worktrees simultaneously requires changing or removing
+`container_name` in one of them.
+
 ## Stack
 
 - **Backend:** Python + FastAPI + WebSockets

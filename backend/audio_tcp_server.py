@@ -24,6 +24,18 @@ STREAM_TAG_SYSTEM = 0x01
 STREAM_TAG_MIC = 0x02
 _VALID_STREAM_TAGS = frozenset({STREAM_TAG_SYSTEM, STREAM_TAG_MIC})
 
+_READ_CHUNK_BYTES = 4096
+
+
+class _Connection:
+    """A handshake-validated TCP connection with its assigned stream tag."""
+
+    __slots__ = ("tag", "writer")
+
+    def __init__(self, tag: int, writer: asyncio.StreamWriter) -> None:
+        self.tag = tag
+        self.writer = writer
+
 
 async def _read_handshake(reader: asyncio.StreamReader) -> int | None:
     """Read 2-byte handshake; return stream tag on success, None on invalid/EOF."""
@@ -46,6 +58,8 @@ class AudioTcpServer:
         self._host = host
         self._port = port
         self._server: asyncio.base_events.Server | None = None
+        self._queues: dict[int, asyncio.Queue[bytes]] = {}
+        self._active: dict[int, _Connection] = {}
 
     @property
     def is_running(self) -> bool:
@@ -67,6 +81,26 @@ class AudioTcpServer:
         self._server = None
         logger.info("AudioTcpServer stopped")
 
+    def register(self, stream_tag: int) -> asyncio.Queue[bytes]:
+        """Register a consumer for ``stream_tag`` and return its chunk queue."""
+        if stream_tag not in _VALID_STREAM_TAGS:
+            raise ValueError(f"invalid stream tag: {stream_tag!r}")
+        if stream_tag in self._queues:
+            raise RuntimeError(f"stream tag {stream_tag} already registered")
+        queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._queues[stream_tag] = queue
+        return queue
+
+    def unregister(self, stream_tag: int) -> None:
+        """Drop the consumer for ``stream_tag`` and close any active socket."""
+        self._queues.pop(stream_tag, None)
+        conn = self._active.pop(stream_tag, None)
+        if conn is not None:
+            try:
+                conn.writer.close()
+            except Exception:
+                pass
+
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
@@ -80,9 +114,33 @@ class AudioTcpServer:
             except Exception:
                 pass
             return
-        # Routing added in Task 3; for now, close.
-        writer.close()
+
+        queue = self._queues.get(tag)
+        if queue is None:
+            # Task 4 adds parking; for now drop unregistered connections.
+            logger.info("AudioTcpServer: no reader for tag=%d, closing", tag)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return
+
+        conn = _Connection(tag=tag, writer=writer)
+        self._active[tag] = conn
         try:
-            await writer.wait_closed()
-        except Exception:
-            pass
+            while True:
+                data = await reader.read(_READ_CHUNK_BYTES)
+                if not data:
+                    return
+                await queue.put(data)
+        except (ConnectionResetError, asyncio.CancelledError):
+            return
+        finally:
+            if self._active.get(tag) is conn:
+                self._active.pop(tag, None)
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass

@@ -6,10 +6,15 @@ requires-python = ">=3.12"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Default: deselect voiceprint tests so local `pytest` runs don't require the
+# torch/wespeakerruntime stack. CI passes an explicit `-m` expression on the
+# command line, which takes precedence over this default and re-enables them.
+addopts = ["-m", "not voiceprint"]
 markers = [
     "integration: requires live API keys (Deepgram, Anthropic)",
     "slow: tests that take >5s",
     "eval: LLM eval tests that cost money",
+    "voiceprint: requires wespeakerruntime + torch (install requirements-voiceprint.txt)",
 ]
 testpaths = ["tests"]
 timeout = 30

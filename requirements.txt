@@ -15,6 +15,8 @@ SQLAlchemy==2.0.48
 starlette==1.0.0
 uvicorn==0.34.0
 websockets==16.0
-# Optional: voiceprint extraction (WeSpeaker ECAPA-TDNN)
+# Numpy is used by pure-numpy logic in backend/speaker_embeddings.py
+# (fbank computation, cosine similarity, centroid math). The heavier
+# voiceprint-model runtime (torch + wespeakerruntime) lives in
+# requirements-voiceprint.txt — CI installs both; local dev can opt in.
 numpy>=1.24.0
-wespeakerruntime>=1.0.0

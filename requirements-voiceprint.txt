@@ -1,0 +1,12 @@
+# Optional voiceprint extraction stack (WeSpeaker ECAPA-TDNN).
+#
+# Install on top of requirements.txt when you want to run the voiceprint-backed
+# speaker embedding tests locally:
+#
+#     pip install -r requirements.txt -r requirements-voiceprint.txt
+#
+# CI (Ubuntu) installs both files automatically; the voiceprint-marked tests
+# are deselected by default locally (see pyproject.toml `addopts`), and
+# selected unconditionally in CI.
+torch>=2.0.0
+wespeakerruntime>=1.0.0

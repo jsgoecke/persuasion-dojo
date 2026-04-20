@@ -3,31 +3,23 @@ import ScreenCaptureKit
 import AVFoundation
 import AudioCaptureCore
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// ── Config ─────────────────────────────────────────────────────────────────
 
-let systemPipePath = "/tmp/persuasion_audio.pipe"
-let micPipePath = "/tmp/persuasion_mic.pipe"
+let envPort = ProcessInfo.processInfo.environment["AUDIO_BACKEND_PORT"]
+let port: UInt16 = envPort.flatMap { UInt16($0) } ?? 9090
+let host = "127.0.0.1"
 
-// ── FIFO creation ─────────────────────────────────────────────────────────
-
-func createFIFO(at path: String) {
-    Darwin.unlink(path)
-    let result = Darwin.mkfifo(path, 0o600)
-    if result != 0 {
-        fputs("AudioCapture: mkfifo failed (errno \(errno))\n", stderr)
-        exit(1)
-    }
-}
+fputs("AudioCapture: target \(host):\(port)\n", stderr)
 
 // ── Signal handling ────────────────────────────────────────────────────────
 
 signal(SIGPIPE, SIG_IGN)
 
-let systemPipeWriter = PipeWriter(path: systemPipePath)
-let micPipeWriter = PipeWriter(path: micPipePath)
-let mixer = AudioMixer(systemWriter: systemPipeWriter, micWriter: micPipeWriter)
-let capture = ScreenAudioCapture(mixer: mixer)
-let micCapture = MicCapture()
+let systemWriter = TcpStreamWriter(host: host, port: port, streamTag: 0x01)
+let micWriter    = TcpStreamWriter(host: host, port: port, streamTag: 0x02)
+let mixer        = AudioMixer(systemWriter: systemWriter, micWriter: micWriter)
+let capture      = ScreenAudioCapture(mixer: mixer)
+let micCapture   = MicCapture()
 
 func handleShutdown() {
     Task {
@@ -35,10 +27,8 @@ func handleShutdown() {
         micCapture.stop()
         await capture.stop()
         mixer.stop()
-        systemPipeWriter.stop()
-        micPipeWriter.stop()
-        Darwin.unlink(systemPipePath)
-        Darwin.unlink(micPipePath)
+        systemWriter.stop()
+        micWriter.stop()
         exit(0)
     }
 }
@@ -54,7 +44,7 @@ sigIntSource.resume()
 signal(SIGTERM, SIG_IGN)
 signal(SIGINT, SIG_IGN)
 
-// ── Permission check & start ────────────────────────────────────────────
+// ── Permission check & start ───────────────────────────────────────────────
 
 Task {
     fputs("AudioCapture: checking Screen Recording permission…\n", stderr)
@@ -69,33 +59,23 @@ Task {
     }
     fputs("AudioCapture: permission OK\n", stderr)
 
-    // Create FIFOs and start PipeWriters (each waits for reader in background).
-    createFIFO(at: systemPipePath)
-    createFIFO(at: micPipePath)
-    systemPipeWriter.start()
-    micPipeWriter.start()
+    systemWriter.start()
+    micWriter.start()
 
-    // Start the audio mixer (flushes mixed PCM to PipeWriter every 20 ms).
     mixer.start()
 
-    // Start screen audio capture (writes to mixer).
     do {
         try await capture.start()
     } catch {
         fputs("AudioCapture: failed to start capture: \(error)\n", stderr)
-        Darwin.unlink(systemPipePath)
-        Darwin.unlink(micPipePath)
         exit(1)
     }
 
-    // Start microphone capture (also writes to mixer).
     do {
         try micCapture.start(mixer: mixer)
     } catch {
         fputs("MicCapture: failed to start: \(error)\n", stderr)
     }
 }
-
-// ── Run loop ──────────────────────────────────────────────────────────────
 
 dispatchMain()

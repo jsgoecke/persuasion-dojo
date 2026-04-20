@@ -573,7 +573,12 @@ async def lifespan(app: FastAPI):
         await _get_or_create_user(db)
 
     port = _parse_audio_tcp_port(os.environ.get("AUDIO_TCP_PORT"))
-    audio_tcp_server = AudioTcpServer(host="127.0.0.1", port=port)
+    # Bind host is configurable so the dockerised backend can listen on its
+    # container interface (0.0.0.0) while the host-side port publish in
+    # docker-compose still scopes exposure to loopback. Default stays
+    # 127.0.0.1 for the native dev flow.
+    host = os.environ.get("AUDIO_TCP_HOST") or "127.0.0.1"
+    audio_tcp_server = AudioTcpServer(host=host, port=port)
     await audio_tcp_server.start()
     app.state.audio_tcp_server = audio_tcp_server
 

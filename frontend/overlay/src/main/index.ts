@@ -5,6 +5,7 @@ import { spawn, ChildProcess } from "child_process";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import * as Sentry from "@sentry/electron/main";
 import { autoUpdater } from "electron-updater";
+import { buildCaptureEnv } from "./capture-env";
 
 // ── Log unhandled errors to stderr (debug) ───────────────────────────────────
 process.on("uncaughtException", (err) => {
@@ -127,6 +128,7 @@ function spawnCapture(): void {
 
   captureProcess = spawn(CAPTURE_BINARY, [], {
     stdio: ["ignore", "ignore", "pipe"],
+    env: buildCaptureEnv(process.env),
   });
 
   captureProcess.on("error", (err) => {

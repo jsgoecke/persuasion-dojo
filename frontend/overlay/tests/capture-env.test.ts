@@ -30,4 +30,17 @@ describe("buildCaptureEnv", () => {
     expect(env.PATH).toBe("/usr/bin");
     expect(env.HOME).toBe("/tmp");
   });
+
+  it("treats empty-string AUDIO_BACKEND_PORT as unset and falls through", () => {
+    const env = buildCaptureEnv({
+      AUDIO_BACKEND_PORT: "",
+      AUDIO_TCP_PORT: "9393",
+    });
+    expect(env.AUDIO_BACKEND_PORT).toBe("9393");
+  });
+
+  it("treats empty-string AUDIO_TCP_PORT as unset and defaults to 9090", () => {
+    const env = buildCaptureEnv({ AUDIO_TCP_PORT: "" });
+    expect(env.AUDIO_BACKEND_PORT).toBe("9090");
+  });
 });

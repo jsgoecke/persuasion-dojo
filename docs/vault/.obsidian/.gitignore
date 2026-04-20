@@ -1,0 +1,25 @@
+# Obsidian transient / user-specific state — do not commit.
+# The committed files (workspace.json, core-plugins.json, app.json) pin the
+# default vault experience (Home.md opens on first launch). Everything below
+# is personal / per-user / cache and should stay local.
+
+appearance.json
+graph.json
+hotkeys.json
+workspace-mobile.json
+workspaces.json
+community-plugins.json
+types.json
+bookmarks.json
+starred.json
+templates.json
+daily-notes.json
+zk-prefixer.json
+note-composer.json
+sync.json
+
+plugins/
+themes/
+snippets/
+cache/
+workspace.json.backup

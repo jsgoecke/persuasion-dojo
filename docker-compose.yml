@@ -5,8 +5,14 @@ services:
     container_name: persuasion-dojo-backend
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Bind the audio TCP server on all container interfaces so the host-side
+      # port publish below can reach it. Exposure stays loopback-only because
+      # the published port is bound to host 127.0.0.1.
+      AUDIO_TCP_HOST: "0.0.0.0"
     ports:
       - "8000:8000"
+      - "127.0.0.1:9090:9090"
     volumes:
       - persuasion-dojo-data:/app/data/db
     logging:

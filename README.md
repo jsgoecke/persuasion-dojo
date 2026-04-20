@@ -6,6 +6,43 @@ Built for senior executives and salespeople who have high-stakes conversations r
 
 ---
 
+## Documentation
+
+The canonical developer documentation for this project lives in an **Obsidian vault** at [`docs/vault/`](./docs/vault/Home.md). Start at [`docs/vault/Home.md`](./docs/vault/Home.md).
+
+The vault is organized into nine sections:
+
+| Section | What's in it |
+|---|---|
+| `10 Getting Started` | Prerequisites, env vars, first-time setup, running each component, Docker, troubleshooting |
+| `20 Architecture` | System overview, audio pipeline, transcription pipeline, coaching engine, scoring engine, data model |
+| `30 Backend` | Per-module notes for every Python module in `backend/` — plus a dependency graph |
+| `40 Frontend` | Electron main process, React renderer, WebSocket hooks, build/package, hotkeys |
+| `50 Swift Audio` | ScreenCaptureKit binary, TCP transport protocol, audio lifecycle and supervision |
+| `60 Domain Concepts` | Communicator Superpowers, ELM states, Persuasion Score, Flexibility Score, ACE loop, BKT, cadence rules |
+| `70 Design System` | Typography, colors, spacing, first-run wizard — tied to `DESIGN.md` |
+| `80 Testing and CI` | Python tests, LLM evals, frontend tests, CI pipeline, release pipeline |
+| `90 Decisions and Roadmap` | Key constraints and decisions, changelog highlights, roadmap, design docs index |
+
+### Recommended viewer: Obsidian
+
+The vault is designed to be opened in **[Obsidian](https://obsidian.md)** — a free, local-first Markdown knowledge base. In Obsidian:
+
+- **Graph view** renders the cross-reference graph formed by `[[wikilinks]]` — you can see, for example, every module that imports `models.py`, or every note that mentions the ACE loop.
+- **Tag pane** lets you filter by the hierarchical tags used throughout the vault (`layer/data`, `lang/python`, `stack/fastapi`, `topic/coaching`, …).
+- **Backlinks** on every note show you where it is referenced from.
+- **Frontmatter search** lets you query by `type`, `updated`, `module_path`, etc.
+
+To open the vault:
+
+1. Install [Obsidian](https://obsidian.md).
+2. Choose **Open folder as vault** and point it at `docs/vault/`.
+3. Open `Home.md`.
+
+The vault also renders fine on GitHub — every mermaid diagram and every wikilink-style cross-reference displays correctly in the web UI, so you do not need Obsidian to read it, only to explore it as a graph.
+
+---
+
 ## How it works
 
 ```

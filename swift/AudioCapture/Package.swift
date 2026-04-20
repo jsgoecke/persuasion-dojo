@@ -6,10 +6,13 @@ let package = Package(
     platforms: [
         .macOS(.v13),
     ],
+    products: [
+        .executable(name: "AudioCapture", targets: ["AudioCaptureCLI"]),
+    ],
     targets: [
-        .executableTarget(
-            name: "AudioCapture",
-            path: "Sources/AudioCapture",
+        .target(
+            name: "AudioCaptureCore",
+            path: "Sources/AudioCaptureCore",
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("CoreAudio"),
@@ -17,6 +20,16 @@ let package = Package(
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("AVFoundation"),
             ]
+        ),
+        .executableTarget(
+            name: "AudioCaptureCLI",
+            dependencies: ["AudioCaptureCore"],
+            path: "Sources/AudioCaptureCLI"
+        ),
+        .testTarget(
+            name: "AudioCaptureTests",
+            dependencies: ["AudioCaptureCore"],
+            path: "Tests/AudioCaptureTests"
         ),
     ]
 )

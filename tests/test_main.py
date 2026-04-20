@@ -59,9 +59,9 @@ from sqlalchemy import select
 # ---------------------------------------------------------------------------
 # Audio pipeline stub
 #
-# websocket_session now starts AudioPipeReader + DeepgramTranscriber.
+# websocket_session now starts AudioTcpReader + DeepgramTranscriber.
 # Patch both at the backend.main import level so tests never touch a real
-# FIFO or Deepgram WebSocket.
+# TCP socket or Deepgram WebSocket.
 
 @pytest.fixture(autouse=True)
 def stub_audio_pipeline():
@@ -76,7 +76,7 @@ def stub_audio_pipeline():
     transcriber_mock.send_audio = AsyncMock()
 
     with (
-        patch("backend.main.AudioPipeReader", return_value=pipe_mock),
+        patch("backend.main.AudioTcpReader", return_value=pipe_mock),
         patch("backend.main.HybridTranscriber", return_value=transcriber_mock),
         patch("backend.main._load_settings", return_value={
             "deepgram_api_key": "test-dg-key",
@@ -1952,3 +1952,45 @@ class TestDeleteSessionPersists:
     def test_delete_nonexistent_session_returns_404(self, client):
         resp = client.delete("/sessions/nonexistent-id")
         assert resp.status_code == 404
+
+
+# ── AudioTcpServer lifespan integration ─────────────────────────────────────
+
+from backend.audio_tcp_server import AudioTcpServer
+
+
+@pytest.mark.asyncio
+async def test_lifespan_starts_and_stops_audio_tcp_server(monkeypatch) -> None:
+    # Bind to an ephemeral port to avoid collisions
+    monkeypatch.setenv("AUDIO_TCP_PORT", "0")
+    from backend.main import app
+
+    # Drive lifespan startup/shutdown directly — httpx ASGITransport does
+    # not fire lifespan events, so use the app's lifespan_context manager.
+    async with app.router.lifespan_context(app):
+        server: AudioTcpServer = app.state.audio_tcp_server  # type: ignore[attr-defined]
+        assert isinstance(server, AudioTcpServer)
+        assert server.is_running is True
+
+    assert server.is_running is False
+
+
+# ── AUDIO_TCP_PORT parse helper ─────────────────────────────────────────────
+
+
+def test_parse_audio_tcp_port_defaults_when_unset() -> None:
+    from backend.main import _DEFAULT_AUDIO_TCP_PORT, _parse_audio_tcp_port
+    assert _parse_audio_tcp_port(None) == _DEFAULT_AUDIO_TCP_PORT
+    assert _parse_audio_tcp_port("") == _DEFAULT_AUDIO_TCP_PORT
+
+
+def test_parse_audio_tcp_port_rejects_non_integer() -> None:
+    from backend.main import _parse_audio_tcp_port
+    with pytest.raises(ValueError, match="AUDIO_TCP_PORT must be an integer"):
+        _parse_audio_tcp_port("abc")
+
+
+def test_parse_audio_tcp_port_rejects_out_of_range() -> None:
+    from backend.main import _parse_audio_tcp_port
+    with pytest.raises(ValueError, match="between 0 and 65535"):
+        _parse_audio_tcp_port("99999")

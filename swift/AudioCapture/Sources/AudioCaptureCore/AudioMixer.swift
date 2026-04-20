@@ -6,14 +6,14 @@ import Foundation
 ///
 /// Both ScreenAudioCapture and MicCapture produce 16 kHz mono Int16 LE samples.
 /// AudioMixer accumulates samples from each source into separate buffers, then
-/// a 10 ms timer fires and writes each source to its own PipeWriter independently.
+/// a 10 ms timer fires and writes each source to its own writer independently.
 ///
-/// Each pipe gets rate-controlled output at 32 KB/s (1× realtime) when its source
+/// Each stream gets rate-controlled output at 32 KB/s (1× realtime) when its source
 /// has data. If a source has no data for a given flush, nothing is written to that
-/// pipe (no silence padding).
-final class AudioMixer {
-    private let systemWriter: PipeWriter
-    private let micWriter: PipeWriter
+/// stream (no silence padding).
+public final class AudioMixer {
+    private let writeSystem: (Data) -> Void
+    private let writeMic: (Data) -> Void
     private let queue = DispatchQueue(label: "audio.mixer", qos: .userInteractive)
 
     // Separate accumulation buffers for each source.
@@ -39,14 +39,14 @@ final class AudioMixer {
     private var meterMicIn: Int = 0
     private var meterStart: UInt64 = 0
 
-    init(systemWriter: PipeWriter, micWriter: PipeWriter) {
-        self.systemWriter = systemWriter
-        self.micWriter = micWriter
+    public init(systemWriter: TcpStreamWriter, micWriter: TcpStreamWriter) {
+        self.writeSystem = { [weak systemWriter] data in systemWriter?.write(data) }
+        self.writeMic    = { [weak micWriter]    data in micWriter?.write(data) }
     }
 
     // MARK: - Lifecycle
 
-    func start() {
+    public func start() {
         queue.async { [self] in
             guard !stopped else { return }
             let t = DispatchSource.makeTimerSource(queue: queue)
@@ -62,7 +62,7 @@ final class AudioMixer {
         }
     }
 
-    func stop() {
+    public func stop() {
         queue.sync {
             stopped = true
             timer?.cancel()
@@ -100,7 +100,7 @@ final class AudioMixer {
 
     /// Safety cap: if a buffer grows beyond 1 second of audio (32 KB at 16 kHz
     /// mono Int16), trim the oldest samples.  This prevents unbounded memory
-    /// growth if PipeWriter is blocked waiting for a reader.
+    /// growth if the writer is blocked waiting for a reader.
     private func _trimBuffer(_ buffer: inout Data, label: String) {
         let maxBytes = 16_000 * 2  // 1 second of 16 kHz mono Int16
         if buffer.count > maxBytes {
@@ -135,7 +135,7 @@ final class AudioMixer {
             }
             screenBuffer.removeFirst(screenSamples * MemoryLayout<Int16>.size)
             let writeData = output.withUnsafeBufferPointer { Data(buffer: $0) }
-            systemWriter.write(writeData)
+            writeSystem(writeData)
             meterSystemOut += writeData.count
         }
 
@@ -151,7 +151,7 @@ final class AudioMixer {
             }
             micBuffer.removeFirst(micSamples * MemoryLayout<Int16>.size)
             let writeData = output.withUnsafeBufferPointer { Data(buffer: $0) }
-            micWriter.write(writeData)
+            writeMic(writeData)
             meterMicOut += writeData.count
         }
 

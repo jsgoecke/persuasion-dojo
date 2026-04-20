@@ -167,14 +167,24 @@ class TestSpeakerCentroid:
         assert result is not None
 
 
-# ── Extractor with model (integration, skip if wespeakerruntime missing) ──
+# ── Extractor with model ───────────────────────────────────────────────────
+#
+# Marked `voiceprint` — deselected by default locally (see pyproject.toml),
+# run unconditionally in CI. If the marker selects this class but the deps
+# are missing, we fail loudly rather than skipping — a silent skip in CI
+# would mask a broken requirements-voiceprint.txt install.
 
+@pytest.mark.voiceprint
 class TestExtractorIntegration:
     @pytest.fixture
     def extractor(self):
         ext = VoiceprintExtractor()
         if not ext.available:
-            pytest.skip("wespeakerruntime not installed")
+            pytest.fail(
+                "VoiceprintExtractor is unavailable despite the `voiceprint` "
+                "marker selecting this test. Install the extras: "
+                "`pip install -r requirements-voiceprint.txt`."
+            )
         return ext
 
     def test_extract_short_segment_returns_none(self, extractor):

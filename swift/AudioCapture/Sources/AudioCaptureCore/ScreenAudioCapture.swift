@@ -106,17 +106,17 @@ final class AudioCaptureOutput: NSObject, SCStreamOutput {
 
 // MARK: - Stream controller
 
-final class ScreenAudioCapture {
+public final class ScreenAudioCapture {
     private var stream: SCStream?
     private var captureOutput: AudioCaptureOutput?
     private let mixer: AudioMixer
 
-    init(mixer: AudioMixer) {
+    public init(mixer: AudioMixer) {
         self.mixer = mixer
     }
 
     /// Check whether Screen Recording permission has been granted.
-    static func checkPermission() async throws {
+    public static func checkPermission() async throws {
         do {
             _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         } catch {
@@ -126,7 +126,7 @@ final class ScreenAudioCapture {
     }
 
     /// Start capturing system audio.
-    func start() async throws {
+    public func start() async throws {
         fputs("ScreenAudioCapture: configuring…\n", stderr)
         // Build SCStreamConfiguration: mono audio, 16 kHz
         let config = SCStreamConfiguration()
@@ -176,7 +176,7 @@ final class ScreenAudioCapture {
         fputs("AudioCapture: streaming started (16 kHz, mono, Int16 LE)\n", stderr)
     }
 
-    func stop() async {
+    public func stop() async {
         guard let stream else { return }
         do {
             try await stream.stopCapture()
@@ -189,11 +189,11 @@ final class ScreenAudioCapture {
 
 // MARK: - Errors
 
-enum CaptureError: Error, CustomStringConvertible {
+public enum CaptureError: Error, CustomStringConvertible {
     case permissionDenied
     case noDisplay
 
-    var description: String {
+    public var description: String {
         switch self {
         case .permissionDenied:
             return "Screen Recording permission denied. Grant it in System Settings → Privacy & Security → Screen Recording."

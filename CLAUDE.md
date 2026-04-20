@@ -21,11 +21,11 @@ curl localhost:8000/health     # smoke test
 docker compose down            # stop; SQLite data persists in the named volume
 ````
 
-The Docker image is backend-only. The Swift ScreenCaptureKit binary and
-Electron overlay continue to run on the host Mac — live audio capture is
-not available inside the container. A future PR refactors audio transport
-to TCP before re-opening containerized live audio. See
-`docs/superpowers/specs/2026-04-19-dockerize-backend-design.md`.
+The backend container now accepts live audio from the host Swift binary
+over loopback TCP (port `9090` by default, override with `AUDIO_TCP_PORT`).
+Run the Swift ScreenCaptureKit binary on the host and it will connect to
+`127.0.0.1:9090`. The Electron overlay spawns the Swift binary and
+forwards `AUDIO_BACKEND_PORT` automatically.
 
 **Host venv users:** the `requirements.txt` split means test tooling is
 now in `requirements-dev.txt`. Install both for a working dev env:
@@ -34,10 +34,9 @@ now in `requirements-dev.txt`. Install both for a working dev env:
 pip install -r requirements.txt -r requirements-dev.txt
 ```
 
-**Note:** `docker-compose.yml` sets `container_name: persuasion-dojo-backend`,
-so only one instance of this stack can run at a time on a given Docker host.
-Running two worktrees simultaneously requires changing or removing
-`container_name` in one of them.
+**Single-instance note:** `docker-compose.yml` sets `container_name:
+persuasion-dojo-backend`, so only one instance of this stack can run at
+a time on a given Docker host.
 
 ## Stack
 

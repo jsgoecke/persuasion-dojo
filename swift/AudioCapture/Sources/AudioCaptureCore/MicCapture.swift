@@ -1,11 +1,11 @@
 import AVFoundation
 import Foundation
 
-/// Captures microphone input and writes Int16 LE mono 16 kHz PCM via PipeWriter.
+/// Captures microphone input and forwards Int16 LE mono 16 kHz PCM to AudioMixer.
 ///
 /// Uses AVAudioEngine to tap the default input device.  The audio is converted
 /// from whatever the hardware format is to mono 16 kHz Int16 LE to match the
-/// ScreenCaptureKit output so both streams share the same FIFO.
+/// ScreenCaptureKit output so both streams share the same TCP transport.
 public final class MicCapture {
     private let engine = AVAudioEngine()
     private var mixer: AudioMixer?

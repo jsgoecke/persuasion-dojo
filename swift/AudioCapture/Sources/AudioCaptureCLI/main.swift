@@ -6,7 +6,20 @@ import AudioCaptureCore
 // ── Config ─────────────────────────────────────────────────────────────────
 
 let envPort = ProcessInfo.processInfo.environment["AUDIO_BACKEND_PORT"]
-let port: UInt16 = envPort.flatMap { UInt16($0) } ?? 9090
+let port: UInt16
+if let raw = envPort, !raw.isEmpty {
+    // Env var is present — parse strictly. A typo silently defaulting to 9090
+    // causes Python and Swift to diverge on which port they're using, which is
+    // very hard to debug.
+    guard let parsed = UInt16(raw), parsed > 0 else {
+        fputs("AudioCapture: AUDIO_BACKEND_PORT must be a non-zero UInt16, got \(raw)\n",
+              stderr)
+        exit(2)
+    }
+    port = parsed
+} else {
+    port = 9090
+}
 let host = "127.0.0.1"
 
 fputs("AudioCapture: target \(host):\(port)\n", stderr)
@@ -33,6 +46,12 @@ func handleShutdown() {
     }
 }
 
+// Install SIG_IGN dispositions before creating the DispatchSources, so a signal
+// delivered during setup can't run the default terminate handler in the gap
+// between process start and source.resume().
+signal(SIGTERM, SIG_IGN)
+signal(SIGINT, SIG_IGN)
+
 let sigTermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 sigTermSource.setEventHandler { handleShutdown() }
 sigTermSource.resume()
@@ -40,9 +59,6 @@ sigTermSource.resume()
 let sigIntSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
 sigIntSource.setEventHandler { handleShutdown() }
 sigIntSource.resume()
-
-signal(SIGTERM, SIG_IGN)
-signal(SIGINT, SIG_IGN)
 
 // ── Permission check & start ───────────────────────────────────────────────
 

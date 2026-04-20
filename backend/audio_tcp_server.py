@@ -114,9 +114,13 @@ class AudioTcpServer:
 
         pending = self._pending.pop(stream_tag, None)
         if pending is not None:
-            # Drain buffered bytes first, preserving order
-            for chunk in pending.buffer:
-                queue.put_nowait(chunk)
+            # Attach the queue and wake the park loop. The buffer drain is
+            # deferred to _park_until_attached so it runs only after the
+            # concurrent _buffer_reader has exited — otherwise _buffer_reader
+            # could append more bytes between our drain and its own exit,
+            # and those bytes would be orphaned (neither queued nor read by
+            # the main loop in _handle_client, which takes over the socket
+            # only after _park_until_attached returns).
             pending.queue = queue
             pending.attached_event.set()
         return queue
@@ -241,5 +245,16 @@ class AudioTcpServer:
                 except (asyncio.CancelledError, Exception):
                     pass
         if pending.attached_event.is_set():
-            return pending.queue
+            # _buffer_reader has now exited (either normally because the event
+            # was set, or because we cancelled and awaited it above). Drain
+            # any buffered bytes into the attached queue, preserving order.
+            # Doing this here (rather than in register()) closes the race
+            # where _buffer_reader appends bytes after register's drain but
+            # before _buffer_reader observes the event and exits.
+            queue = pending.queue
+            assert queue is not None  # guaranteed by register() setting both
+            for chunk in pending.buffer:
+                queue.put_nowait(chunk)
+            pending.buffer.clear()
+            return queue
         return None

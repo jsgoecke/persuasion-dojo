@@ -6,40 +6,75 @@ Deep technical reference for Persuasion Dojo. Read this before touching any back
 
 ## System overview
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        macOS host                               │
-│                                                                 │
-│  ┌──────────────┐  system pipe        ┌─────────────────────┐  │
-│  │ Swift binary │ ──────────────────► │  system AudioPipe   │  │
-│  │ (SCK + mic)  │                     │  (diarization ON)   │  │
-│  │              │  mic pipe           ├─────────────────────┤  │
-│  │  AudioMixer  │ ──────────────────► │  mic AudioPipe      │  │
-│  │  (split out) │                     │  (no diarization)   │  │
-│  └──────────────┘                     └──────────┬──────────┘  │
-│                                                  │ PCM chunks  │
-│                                       ┌──────────▼──────────┐  │
-│                                       │ 2× Deepgram WS      │  │
-│                                       │ transcription.py     │  │
-│                                       └──────────┬──────────┘  │
-│                                          user │  │ counterpart │
-│                                       ┌──────────▼──────────┐  │
-│                                       │  backend/main.py    │  │
-│                                       │  SessionPipeline    │  │
-│                                       │  ├─ ELMDetector     │  │
-│                                       │  ├─ Profiler        │  │
-│                                       │  ├─ CoachingEngine  │  │
-│                                       │  ├─ SpeakerResolver │  │
-│                                       │  └─ ScoringEngine   │  │
-│                                       └──────────┬──────────┘  │
-│                                                  │ WebSocket   │
-│  ┌───────────────────────────────────┐           │             │
-│  │ Electron overlay (React)          │ ◄─────────┘             │
-│  │ always-on-top, user-only          │                         │
-│  └───────────────────────────────────┘                         │
-│                                                                 │
-│                          SQLite (WAL mode)                      │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph macOS["macOS host"]
+        direction TB
+
+        subgraph Swift["Swift binary (ScreenCaptureKit + mic)"]
+            AudioMixer["AudioMixer<br/>(splits system vs mic)"]
+        end
+
+        SysPipe[["/tmp/persuasion_audio.pipe<br/>system audio"]]
+        MicPipe[["/tmp/persuasion_mic.pipe<br/>mic audio"]]
+
+        subgraph Transcribers["backend/hybrid_transcription.py<br/>(Deepgram primary, Moonshine fallback)"]
+            SysTx["System transcriber<br/>diarization ON<br/>→ counterpart_N"]
+            MicTx["Mic transcriber<br/>diarization OFF<br/>→ user"]
+        end
+
+        subgraph Pipeline["backend/main.py — SessionPipeline (per session)"]
+            direction TB
+            EchoFilter["Echo filter<br/>(is_echo, ≥60% word overlap)"]
+            TurnTracker["TurnTracker<br/>(vocative-bootstrapped<br/>speaker boost)"]
+            SpeakerResolver["SpeakerResolver<br/>(LLM name resolution<br/>every 60s)"]
+            ELM["ELMDetector<br/>(ego_threat / shortcut /<br/>consensus_protection)"]
+            Profiler["ParticipantProfiler +<br/>UserBehaviorObserver"]
+            Coach["CoachingEngine<br/>(Haiku, 1.5s timeout,<br/>cached fallback)"]
+            Bullets["Bullet store / ACE Selector<br/>(coaching_bullets.py)"]
+            Scoring["ScoringEngine<br/>(Persuasion / Growth /<br/>Flexibility / BKT)"]
+        end
+
+        subgraph Storage["SQLite (WAL, async via aiosqlite)"]
+            DB[("User · ContextProfile ·<br/>Participant · MeetingSession ·<br/>CoachingPrompt · SkillMastery ·<br/>CoachingBullet")]
+        end
+
+        Overlay["Electron overlay (React + Vite)<br/>always-on-top, user-only"]
+
+        Reflector["Reflector (Opus)<br/>post-session, background"]
+        Curator["Curator (deterministic Python)<br/>merge / dedupe / retire"]
+    end
+
+    AudioMixer -- "PCM, system mix" --> SysPipe
+    AudioMixer -- "PCM, mic only" --> MicPipe
+    SysPipe --> SysTx
+    MicPipe --> MicTx
+
+    SysTx -- "counterpart utterances" --> EchoFilter
+    MicTx -- "user utterances" --> EchoFilter
+    EchoFilter --> TurnTracker
+    TurnTracker --> SpeakerResolver
+    SpeakerResolver --> ELM
+    SpeakerResolver --> Profiler
+    ELM --> Coach
+    Profiler --> Coach
+    Bullets -- "top-15 bullets" --> Coach
+    Coach --> Scoring
+
+    Coach -- "coaching_prompt / speaker_identified /<br/>audio_level / transcriber_status" --> Overlay
+    Overlay -- "utterance · confirm_profile ·<br/>session_end · ping" --> Pipeline
+
+    Pipeline <--> DB
+    Bullets <--> DB
+
+    Scoring -- "session end<br/>(transcript + prompts)" --> Reflector
+    Reflector -- "JSON delta entries" --> Curator
+    Curator --> Bullets
+
+    classDef pipe fill:#2a2a33,stroke:#D4A853,color:#fff
+    classDef store fill:#1A1A1E,stroke:#D4A853,color:#fff
+    class SysPipe,MicPipe pipe
+    class DB store
 ```
 
 ---
@@ -456,40 +491,32 @@ Pre-seed accuracy gate: ≥70% correct classification on 5 known profiles before
 
 The coaching engine gets smarter over time through a closed adaptive loop built on three roles: **Reflector → Curator → Selector**. This is the ACE (Agentic Context Engineering) pipeline.
 
-```
-Session ends
-     │
-     ▼
-┌─────────────┐     JSON delta entries      ┌─────────────┐
-│  Reflector  │ ──────────────────────────► │   Curator   │
-│  (Opus)     │   "what worked / didn't"    │  (Python)   │
-└─────────────┘                             └──────┬──────┘
-                                                   │ merge
-                                                   ▼
-                                          ┌─────────────────┐
-                                          │   Bullet Store  │
-                                          │   (SQLite)      │
-                                          │  CoachingBullet │
-                                          └──────┬──────────┘
-                                                 │ top-N bullets
-                                                 ▼
-                                          ┌─────────────┐
-                                          │  Selector   │
-                                          │  (Python,   │
-                                          │  <10ms)     │
-                                          └──────┬──────┘
-                                                 │ injected into prompt context
-                                                 ▼
-                                          ┌─────────────┐
-                                          │ Haiku call  │
-                                          │ (real-time) │
-                                          └─────────────┘
-                                                 │
-                                          prompt effectiveness score
-                                                 │
-                                                 ▼
-                                        helpful/harmful counters
-                                        updated on bullet rows
+```mermaid
+flowchart TB
+    SessionEnd([Session ends])
+    Reflector["Reflector (Claude Opus)<br/>post-session, background"]
+    Curator["Curator (deterministic Python)<br/>merge · dedupe by content hash ·<br/>retire when harmful ≥ helpful + 2 ·<br/>cap at 100 bullets"]
+    Store[("Bullet Store<br/>CoachingBullet (SQLite)")]
+    Selector["Selector (Python, &lt;10ms)<br/>Thompson Sampling +<br/>BKT-aware weighting +<br/>archetype / ELM / context match"]
+    Haiku["Haiku call (real-time coaching)<br/>top-15 bullets (≤500 words)<br/>injected as playbook"]
+    Effectiveness["Prompt effectiveness scoring<br/>(convergence shift · user behaviour)"]
+    Counters["Update helpful_count /<br/>harmful_count on bullet rows"]
+
+    SessionEnd --> Reflector
+    Reflector -- "≤8 JSON delta entries<br/>(what worked / didn't)" --> Curator
+    Curator -- "merged deltas" --> Store
+    Store -- "active bullets" --> Selector
+    Selector -- "top-N bullets<br/>injected into prompt context" --> Haiku
+    Haiku --> Effectiveness
+    Effectiveness --> Counters
+    Counters -- "next session" --> Store
+
+    classDef llm fill:#2a2a33,stroke:#D4A853,color:#fff
+    classDef py fill:#1A1A1E,stroke:#7a7a80,color:#fff
+    classDef store fill:#1A1A1E,stroke:#D4A853,color:#fff
+    class Reflector,Haiku llm
+    class Curator,Selector,Effectiveness,Counters py
+    class Store store
 ```
 
 ### The three roles

@@ -40,10 +40,10 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        # Install core + voiceprint extras so CI runs the full test matrix
+        # Install core + dev + voiceprint extras so CI runs the full test matrix
         # (voiceprint-marked tests are deselected locally by default via
         # pyproject.toml addopts; CI overrides the marker filter below).
-        run: pip install -r requirements.txt -r requirements-voiceprint.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-voiceprint.txt
 
       - name: Run tests with coverage
         env:

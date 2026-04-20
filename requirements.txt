@@ -7,14 +7,11 @@ httpx==0.28.1
 pydantic==2.12.5
 python-dotenv==1.2.2
 python-multipart==0.0.22
-pytest==9.0.2
-pytest-asyncio==1.3.0
-pytest-cov==6.1.1
-pytest-timeout==2.4.0
 SQLAlchemy==2.0.48
 starlette==1.0.0
 uvicorn==0.34.0
 websockets==16.0
+
 # Numpy is used by pure-numpy logic in backend/speaker_embeddings.py
 # (fbank computation, cosine similarity, centroid math). The heavier
 # voiceprint-model runtime (torch + wespeakerruntime) lives in
